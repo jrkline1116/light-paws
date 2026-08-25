@@ -1,0 +1,11 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+body { margin: 0; background: #0f1118; -webkit-tap-highlight-color: transparent; }
+
+/* keep the bottom tab bar clear of the phone's home indicator */
+@supports (padding: max(0px)) {
+  .safe-bottom { padding-bottom: max(0px, env(safe-area-inset-bottom)); }
+}
