@@ -7,7 +7,7 @@ import {
 /* ============================================================
    CONFIG — fill these in, then rebuild. Leave "" to hide.
    ============================================================ */
-const DONATE_URL = "";   // e.g. "https://ko-fi.com/yourname"
+const DONATE_URL = "https://buymeacoffee.com/jrkline1116";   // e.g. "https://ko-fi.com/yourname"
 const AD_CLIENT  = "";   // AdSense publisher id, e.g. "ca-pub-0000000000000000"
 const AD_SLOT    = "";   // AdSense ad-unit slot id, e.g. "1234567890"
 
