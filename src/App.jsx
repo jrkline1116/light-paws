@@ -541,7 +541,7 @@ export default function LightPawsConsole() {
           <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights }} />
         )}
         {tab === 2 && (
-          <FetchTab {...{ deckAuras, equipped, equip, valueOfAdding, curPower, curTough, openInfo }} />
+          <FetchTab {...{ deckAuras, equipped, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights }} />
         )}
         {tab === 3 && (
           <DeckTab {...{ deck, setDeck, equipped, setEquipped, openInfo, synced: !!enriched, lib: LIB, onImport: importList, importing }} />
@@ -1479,9 +1479,10 @@ function FetchRow({ a, ev, first, onEquip, onInfo }) {
 }
 
 /* ====================== TAB · FETCH (Light-Paws trigger) ====================== */
-function FetchTab({ deckAuras, equipped, equip, valueOfAdding, curPower, curTough, openInfo }) {
+function FetchTab({ deckAuras, equipped, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights }) {
   const [mv, setMv] = useState(2);
   const [q, setQ] = useState("");
+  const [showHelp, setShowHelp] = useState(false);
   const cap = mv >= 5 ? 99 : mv;
 
   const pool = deckAuras.filter((a) => !equipped.has(a.id) && a.cmc <= cap && auraMatchesText(a, q));
@@ -1529,6 +1530,13 @@ function FetchTab({ deckAuras, equipped, equip, valueOfAdding, curPower, curToug
       <p className="text-[11px] mb-6" style={{ color: "#6f6a5d" }}>
         Removal auras (Pacifism, Arrest, Reprobation…) aren't shown here — Light-Paws can only attach a fetch to itself, so those are cards you cast from hand on the Play tab.
       </p>
+
+      <button onClick={() => setShowHelp((v) => !v)} className="text-xs flex items-center gap-1 mb-2" style={{ color: "#8b8778" }}>⚙ Scoring weights — tap to adjust {showHelp ? "▲" : "▼"}</button>
+      {showHelp && (
+        <div className="rounded-lg p-3 mb-4" style={{ background: "rgba(255,255,255,0.04)" }}>
+          <WeightsEditor weights={weights} setWeights={setWeights} />
+        </div>
+      )}
     </div>
   );
 }
