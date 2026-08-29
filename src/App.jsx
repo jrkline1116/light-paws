@@ -35,6 +35,12 @@ const KW = {
 };
 const KW_ORDER = Object.keys(KW);
 
+// default scoring weights (users can override these in the app; persisted)
+const DEFAULT_WEIGHTS = {
+  ...Object.fromEntries(Object.keys(KW).map((k) => [k, KW[k].w])),
+  P_VAL, T_VAL, DRAW_VAL, TOKEN_NOW, TOKEN_COND, ETB_REMOVAL, CONNECT_EVASIVE, CONNECT_GROUND,
+};
+
 const COLORS = [
   { key: "white", label: "White", hex: "#f3ead0", fg: "#6b5212" },
   { key: "blue",  label: "Blue",  hex: "#3b7fc4", fg: "#ffffff" },
@@ -377,6 +383,9 @@ export default function LightPawsConsole() {
   const deckNames = useMemo(() => new Set(deckAuras.map((a) => a.name)), [deckAuras]);
   const [hand, setHand] = useState(() => new Set(LS.get("hand", [])));
   useEffect(() => { LS.set("hand", [...hand]); }, [hand]);
+  const [weights, setWeights] = useState(() => ({ ...DEFAULT_WEIGHTS, ...LS.get("weights", {}) }));
+  useEffect(() => { LS.set("weights", weights); }, [weights]);
+  const W = weights;
   const handAuras = useMemo(() => deckAuras.filter((a) => hand.has(a.id)), [deckAuras, hand]);
   const equippedIds = useMemo(() => [...equipped].filter((id) => deck.has(id)), [equipped, deck]);
 
@@ -409,7 +418,7 @@ export default function LightPawsConsole() {
   const curPower = baseP + ctx.addP;
   const curTough = baseT + ctx.addT;
   const curDS = ctx.have.has("doubleStrike");
-  const projDmg = Math.round(curPower * (ctx.evasive ? CONNECT_EVASIVE : CONNECT_GROUND) * (curDS ? 2 : 1));
+  const projDmg = Math.round(curPower * (ctx.evasive ? W.CONNECT_EVASIVE : W.CONNECT_GROUND) * (curDS ? 2 : 1));
 
   // ---- value of adding a set of auras ----
   function valueOfAdding(ids) {
@@ -427,7 +436,7 @@ export default function LightPawsConsole() {
       [...ctx.on, ...set].forEach((a) => { const s = resolveStat(a, counts); afterP += s.p; afterT += s.t; });
       addP = afterP - beforeP; addT = afterT - beforeT;
     }
-    const statScore = addP * P_VAL + addT * T_VAL;
+    const statScore = addP * W.P_VAL + addT * W.T_VAL;
 
     const otherPresent = resulting >= 2 || ctx.on.length >= 1;
     const added = new Set();
@@ -435,7 +444,7 @@ export default function LightPawsConsole() {
     const finalHave = new Set(before); added.forEach((k) => finalHave.add(k));
 
     const evasive = finalHave.has("flying") || [...ctx.on, ...set].some((a) => a.evasion);
-    const connect = evasive ? CONNECT_EVASIVE : CONNECT_GROUND;
+    const connect = evasive ? W.CONNECT_EVASIVE : W.CONNECT_GROUND;
     const projPower = baseP + ctx.addP + addP;
 
     let kwScore = 0; const gainedKw = [];
@@ -445,19 +454,19 @@ export default function LightPawsConsole() {
       if (k === "firstStrike" && finalHave.has("doubleStrike")) return;
       if (k === "totemArmor" && finalHave.has("indestructible")) return;
       if (k === "doubleStrike") { const v = projPower * connect; kwScore += v; gainedKw.push(`Double strike (~${v.toFixed(1)})`); return; }
-      kwScore += KW[k].w; gainedKw.push(KW[k].label);
+      kwScore += W[k]; gainedKw.push(KW[k].label);
     });
     const prot = set.filter((a) => a.kw.includes("protection")).length;
-    if (prot > 0) { kwScore += prot * KW.protection.w; gainedKw.push(prot > 1 ? `Protection ×${prot}` : "Protection"); }
+    if (prot > 0) { kwScore += prot * W.protection; gainedKw.push(prot > 1 ? `Protection ×${prot}` : "Protection"); }
 
     let effScore = 0, draws = 0;
     set.forEach((a) => {
       if (a.draw === "sage") draws += counts.auras; else if (a.draw) draws += a.draw;
-      if (a.token === "now") effScore += TOKEN_NOW;
-      if (a.token === "cond") effScore += TOKEN_COND;
-      if (a.etbRemoval) effScore += ETB_REMOVAL;
+      if (a.token === "now") effScore += W.TOKEN_NOW;
+      if (a.token === "cond") effScore += W.TOKEN_COND;
+      if (a.etbRemoval) effScore += W.ETB_REMOVAL;
     });
-    effScore += draws * DRAW_VAL;
+    effScore += draws * W.DRAW_VAL;
 
     return { score: kwScore + statScore + effScore, gainedKw, addP, addT, draws,
       manaW: set.reduce((s, a) => s + a.cost.w, 0), manaTotal: set.reduce((s, a) => s + a.cmc, 0) };
@@ -473,7 +482,7 @@ export default function LightPawsConsole() {
       m[a.id] = { onBoard, affordable, marginal, redundant };
     });
     return m;
-  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT]);
+  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights]);
 
   const best = useMemo(() => {
     const total = white + other;
@@ -491,7 +500,7 @@ export default function LightPawsConsole() {
     })(0, [], 0, 0);
     const single = cands.filter(({ a }) => white >= a.cost.w && total >= a.cmc)[0];
     return { ids: bestSet, eval: bestEval, single: single ? single.a : null };
-  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT]);
+  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights]);
 
   // ---- actions ----
   const equip = (id) => setEquipped((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -529,7 +538,7 @@ export default function LightPawsConsole() {
           <BoardTab {...{ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch }} />
         )}
         {tab === 1 && (
-          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, addToHand, removeFromHand, clearHand, equipped, byName, openInfo }} />
+          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights }} />
         )}
         {tab === 2 && (
           <FetchTab {...{ deckAuras, equipped, equip, valueOfAdding, curPower, curTough, openInfo }} />
@@ -758,7 +767,7 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
 
 /* ====================== TAB 2 · CAST (play from hand) ====================== */
 function PlayTab(p) {
-  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, addToHand, removeFromHand, clearHand, equipped, byName, openInfo } = p;
+  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights } = p;
   const [q, setQ] = useState("");
   const [adding, setAdding] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
@@ -874,13 +883,56 @@ function PlayTab(p) {
         </>
       )}
 
-      <button onClick={() => setShowHelp((v) => !v)} className="text-xs flex items-center gap-1 mb-2" style={{ color: "#8b8778" }}>How scoring works {showHelp ? "▲" : "▼"}</button>
+      <button onClick={() => setShowHelp((v) => !v)} className="text-xs flex items-center gap-1 mb-2" style={{ color: "#8b8778" }}>⚙ Scoring weights — tap to adjust {showHelp ? "▲" : "▼"}</button>
       {showHelp && (
-        <div className="text-[12px] leading-relaxed rounded-lg p-3 mb-4" style={{ background: "rgba(255,255,255,0.04)", color: "#b7b1a2" }}>
-          <p className="mb-1"><b style={{ color: "#e8b84b" }}>Double strike = damage.</b> Worth current power × connect chance (0.85 with flying / protection-from-creatures, else 0.45).</p>
-          <p><b style={{ color: "#e8b84b" }}>Flat weights:</b> hexproof/indestructible 4; lifelink/protection/totem 3; flying/first strike/vigilance/ward 2; +1/power, +0.5/toughness; draw 2; token 1.5; ETB removal 3.</p>
+        <div className="rounded-lg p-3 mb-4" style={{ background: "rgba(255,255,255,0.04)" }}>
+          <WeightsEditor weights={weights} setWeights={setWeights} />
         </div>
       )}
+    </div>
+  );
+}
+
+function WeightRow({ label, wkey, weights, setWeights, step, min, max }) {
+  const v = weights[wkey];
+  const upd = (d) => setWeights((w) => {
+    let nv = Math.round((w[wkey] + d) * 100) / 100;
+    nv = Math.max(min, Math.min(max, nv));
+    return { ...w, [wkey]: nv };
+  });
+  return (
+    <div className="flex items-center justify-between py-0.5">
+      <span className="text-[12px]" style={{ color: "#cfc9ba" }}>{label}</span>
+      <span className="inline-flex items-center gap-1.5">
+        <button onClick={() => upd(-step)} className="w-6 h-6 rounded flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)" }}><Minus size={12} style={{ color: "#ece7db" }} /></button>
+        <span className="text-sm font-bold w-10 text-center" style={{ color: "#e8b84b" }}>{v}</span>
+        <button onClick={() => upd(step)} className="w-6 h-6 rounded flex items-center justify-center" style={{ background: "rgba(255,255,255,0.08)" }}><Plus size={12} style={{ color: "#ece7db" }} /></button>
+      </span>
+    </div>
+  );
+}
+
+function WeightsEditor({ weights, setWeights }) {
+  const kwRows = [["flying", "Flying"], ["firstStrike", "First strike"], ["doubleStrike", "Double strike (× power)"], ["vigilance", "Vigilance"], ["lifelink", "Lifelink"], ["ward", "Ward"], ["totemArmor", "Totem armor"], ["hexproof", "Hexproof"], ["indestructible", "Indestructible"], ["protection", "Protection"]];
+  const Hd = ({ children }) => <div className="text-[11px] font-bold uppercase tracking-wide mt-3 mb-0.5" style={{ color: "#c79a3e" }}>{children}</div>;
+  const kw = (k, l) => <WeightRow key={k} label={l} wkey={k} weights={weights} setWeights={setWeights} step={1} min={0} max={12} />;
+  return (
+    <div>
+      <p className="text-[11px] mb-1" style={{ color: "#8b8778" }}>Tweak what each effect is worth. Changes apply instantly to every ranking and save on this device.</p>
+      <Hd>Keywords</Hd>
+      {kwRows.map(([k, l]) => kw(k, l))}
+      <Hd>Stats (per +1)</Hd>
+      <WeightRow label="Power" wkey="P_VAL" weights={weights} setWeights={setWeights} step={0.5} min={0} max={5} />
+      <WeightRow label="Toughness" wkey="T_VAL" weights={weights} setWeights={setWeights} step={0.5} min={0} max={5} />
+      <Hd>Effects</Hd>
+      <WeightRow label="Card draw (each)" wkey="DRAW_VAL" weights={weights} setWeights={setWeights} step={0.5} min={0} max={10} />
+      <WeightRow label="Token now" wkey="TOKEN_NOW" weights={weights} setWeights={setWeights} step={0.5} min={0} max={10} />
+      <WeightRow label="Token conditional" wkey="TOKEN_COND" weights={weights} setWeights={setWeights} step={0.25} min={0} max={10} />
+      <WeightRow label="ETB removal" wkey="ETB_REMOVAL" weights={weights} setWeights={setWeights} step={0.5} min={0} max={10} />
+      <Hd>Double-strike connect chance</Hd>
+      <WeightRow label="Evasive (flying / pro)" wkey="CONNECT_EVASIVE" weights={weights} setWeights={setWeights} step={0.05} min={0} max={1} />
+      <WeightRow label="Ground (likely blocked)" wkey="CONNECT_GROUND" weights={weights} setWeights={setWeights} step={0.05} min={0} max={1} />
+      <button onClick={() => setWeights({ ...DEFAULT_WEIGHTS })} className="mt-3 text-xs font-bold rounded-lg px-3 py-1.5" style={{ background: "rgba(255,255,255,0.08)", color: "#cfc9ba" }}>Reset to defaults</button>
     </div>
   );
 }
