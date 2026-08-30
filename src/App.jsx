@@ -488,6 +488,11 @@ export default function LightPawsConsole() {
     const total = white + other;
     const cands = handAuras.filter((a) => a.buff && !equipped.has(a.id) && a.canRide)
       .map((a) => ({ a, s: valueOfAdding([a.id]).score })).sort((x, y) => y.s - x.s);
+    // mana not tracked (0): recommend the single best-value aura, no cost filtering
+    if (total === 0) {
+      const top = cands.filter((c) => c.s > 0.5)[0];
+      return { ids: top ? [top.a.id] : [], eval: top ? valueOfAdding([top.a.id]) : valueOfAdding([]), single: top ? top.a : null, noMana: true };
+    }
     let bestSet = [], bestScore = 0, bestEval = valueOfAdding([]); let nodes = 0;
     (function dfs(i, chosen, wU, tU) {
       if (nodes++ > 300000) return;
@@ -826,10 +831,10 @@ function PlayTab(p) {
           <div className="rounded-xl p-3 mb-3" style={{ background: "linear-gradient(160deg, rgba(232,184,75,0.14), rgba(232,184,75,0.05))", border: "1.5px solid #e8b84b" }}>
             <div className="flex items-center gap-1.5 mb-1.5">
               <Star size={15} style={{ color: "#e8b84b" }} fill="#e8b84b" />
-              <span className="text-sm font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>Best play for {total} mana</span>
+              <span className="text-sm font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>{best.noMana ? "Best aura to play" : `Best play for ${total} mana`}</span>
             </div>
             {best.ids.length === 0 ? (
-              <p className="text-sm" style={{ color: "#b7b1a2" }}>No aura in hand adds new value at this mana.{best.single && <> Cheapest useful cast: <b>{byName(best.single.id)}</b>.</>}</p>
+              <p className="text-sm" style={{ color: "#b7b1a2" }}>{best.noMana ? "No aura in hand adds new value to your board right now." : <>No aura in hand adds new value at this mana.{best.single && <> Cheapest useful cast: <b>{byName(best.single.id)}</b>.</>}</>}</p>
             ) : (
               <>
                 <div className="flex flex-wrap gap-1.5 mb-2">
@@ -840,11 +845,12 @@ function PlayTab(p) {
                   ))}
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs" style={{ color: "#cfc9ba" }}>
-                  <span>Uses <b>{best.eval.manaTotal}</b> ({best.eval.manaW}W)</span>
+                  {!best.noMana && <span>Uses <b>{best.eval.manaTotal}</b> ({best.eval.manaW}W)</span>}
                   <span>Score <b>{best.eval.score.toFixed(1)}</b></span>
                   {best.eval.addP + best.eval.addT > 0 && <span>+{best.eval.addP}/+{best.eval.addT}</span>}
                   {best.eval.gainedKw.length > 0 && <span>Gains: {best.eval.gainedKw.join(", ")}</span>}
                 </div>
+                {best.noMana && <div className="text-[11px] mt-1" style={{ color: "#8b8778" }}>Set your mana above for a multi-aura best play — otherwise just cast any card below.</div>}
                 <div className="text-[11px] mt-1" style={{ color: "#8b8778" }}>Tap a suggestion to cast it (attaches to Light-Paws).</div>
               </>
             )}
@@ -852,7 +858,7 @@ function PlayTab(p) {
 
           <div className="grid gap-1.5 mb-3">
             {handAuras.map((a) => (
-              <HandRow key={a.id} aura={a} info={auraInfo[a.id]} ctx={ctx} rec={best.ids.includes(a.id)}
+              <HandRow key={a.id} aura={a} info={auraInfo[a.id]} ctx={ctx} rec={best.ids.includes(a.id)} manaSet={total > 0}
                 onCast={() => (a.buff && a.canRide ? castFromHand(a.id) : removeFromHand(a.id))}
                 onRemove={() => removeFromHand(a.id)} onInfo={() => openInfo(a)} />
             ))}
@@ -937,14 +943,14 @@ function WeightsEditor({ weights, setWeights }) {
   );
 }
 
-function HandRow({ aura, info, ctx, rec, onCast, onRemove, onInfo }) {
+function HandRow({ aura, info, ctx, rec, manaSet, onCast, onRemove, onInfo }) {
   const { affordable, marginal } = info || {};
   const h = useTapHold(() => {}, () => onInfo());
   const stop = (e) => e.stopPropagation();
-  const unaff = affordable === false;
+  const short = manaSet && affordable === false; // only "unaffordable" when mana is actually tracked
   return (
     <div {...h} className="rounded-lg px-3 py-2 transition"
-      style={{ background: rec ? "linear-gradient(160deg, rgba(232,184,75,0.18), rgba(232,184,75,0.05))" : "rgba(255,255,255,0.04)", border: rec ? "1.5px solid #e8b84b" : "1px solid rgba(255,255,255,0.08)", opacity: unaff ? 0.6 : 1, cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
+      style={{ background: rec ? "linear-gradient(160deg, rgba(232,184,75,0.18), rgba(232,184,75,0.05))" : "rgba(255,255,255,0.04)", border: rec ? "1.5px solid #e8b84b" : "1px solid rgba(255,255,255,0.08)", opacity: short ? 0.6 : 1, cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="font-bold text-[15px] flex items-center gap-1.5" style={{ color: "#f0ead9" }}>
@@ -955,12 +961,12 @@ function HandRow({ aura, info, ctx, rec, onCast, onRemove, onInfo }) {
             {statLabel(aura, ctx) && <span className="font-bold" style={{ color: "#cfc9ba" }}>{statLabel(aura, ctx)}</span>}
             {marginal > 0.5 && <span style={{ color: "#93c7e6" }}>+{marginal.toFixed(1)} value</span>}
             {!aura.buff && <span style={{ color: "#8b8778" }}>removal</span>}
-            {unaff && <span style={{ color: "#c98a8a" }}>needs {aura.cost.w}W · {aura.cmc} total</span>}
+            {short && <span style={{ color: "#c98a8a" }}>short on mana ({aura.cost.w}W · {aura.cmc} total)</span>}
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
-          <button onClick={(e) => { stop(e); if (!unaff) onCast(); }} onPointerDown={stop} onPointerUp={stop}
-            className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ background: unaff ? "rgba(255,255,255,0.08)" : "linear-gradient(160deg,#e8b84b,#c1902f)", color: unaff ? "#6f6a5d" : "#221a09" }}>Cast</button>
+          <button onClick={(e) => { stop(e); onCast(); }} onPointerDown={stop} onPointerUp={stop}
+            className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Cast</button>
           <button onClick={(e) => { stop(e); onRemove(); }} onPointerDown={stop} onPointerUp={stop} className="rounded-lg px-1.5 py-1.5" style={{ background: "rgba(255,255,255,0.06)" }} title="Remove from hand"><X size={15} style={{ color: "#8b8778" }} /></button>
         </div>
       </div>
