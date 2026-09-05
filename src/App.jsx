@@ -132,6 +132,11 @@ const LIBRARY = [
   A("ossification","Ossification",1,1,{buff:0,canRide:0,note:"Enchant your land; exile a creature or planeswalker"}),
   A("cageofhands","Cage of Hands",1,1,{buff:0,note:"Can't attack/block; return to hand for 1W"}),
   A("prisonterm","Prison Term",1,2,{buff:0,note:"Can't attack/block/activate; can move to new threats"}),
+  // --- verified additions (popular EDHREC auras) ---
+  A("mantleancients","Mantle of the Ancients",3,2,{scale:"sage",note:"+1/+1 per Aura/Equipment attached; ETB returns Auras/Equipment from your graveyard"}),
+  A("masklawgrace","Mask of Law and Grace",0,1,{kw:["protection"],note:"Protection from two colors (see card)"}),
+  A("shielddutyreason","Shield of Duty and Reason",0,1,{kw:["protection"],note:"Protection from two colors (see card)"}),
+  A("sunbond","Sunbond",3,1,{note:"Whenever you gain life, put that many +1/+1 counters on Light-Paws (not auto-scored — use lifegain judgment)"}),
 ];
 
 const byId = Object.fromEntries(LIBRARY.map((a) => [a.id, a]));
@@ -187,9 +192,10 @@ function deriveAura(c) {
     else scaleNote = "Scaling on " + scaleM[3].trim() + " — not auto-scored";
   }
   const stat = scale ? null : (scaleM ? null : parseFixedStat(o));
-  const isRemoval = /can't attack|can't block|loses all abilities|can't be activated/.test(lo);
-  const grantsGood = kw.size > 0 || (stat && (stat.p > 0 || stat.t > 0)) || !!scale;
-  const buff = !!grantsGood && !isRemoval && canRide;
+  const isRemoval = /can't attack|can't block|loses all abilities|can't be activated|enchant creature an opponent controls/.test(lo);
+  // an aura that can attach to your own creature and isn't removal is a buff —
+  // even if its benefit comes from counters/triggers (Sunbond, Light of Promise) rather than a static +X/+Y or keyword
+  const buff = canRide && !isRemoval;
   const evasion = /protection from creatures|can't be blocked/.test(lo);
   const conditional = /another aura/.test(lo);
   let prot = null;
