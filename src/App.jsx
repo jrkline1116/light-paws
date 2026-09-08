@@ -259,6 +259,8 @@ const DEFAULT_DECK = LIBRARY.filter((a) => a.deck).map((a) => a.id);
 
 export default function LightPawsConsole() {
   const [tab, setTab] = useState(0);
+  const [fetchMv, setFetchMv] = useState(2);          // lifted from Fetch tab so Cast can pre-set it
+  const [pendingFetch, setPendingFetch] = useState(null); // {count, mv} → shows the "go to Fetch?" popup
   const [deck, setDeck] = useState(() => new Set(LS.get("deck", DEFAULT_DECK)));
   const [equipped, setEquipped] = useState(() => new Set(LS.get("equipped", [])));
   const [manualKw, setManualKw] = useState(() => new Set(LS.get("manual", [])));
@@ -424,7 +426,7 @@ export default function LightPawsConsole() {
   const curPower = baseP + ctx.addP;
   const curTough = baseT + ctx.addT;
   const curDS = ctx.have.has("doubleStrike");
-  const projDmg = Math.round(curPower * (ctx.evasive ? W.CONNECT_EVASIVE : W.CONNECT_GROUND) * (curDS ? 2 : 1));
+  const projDmg = Math.round(curPower * (curDS ? 2 : 1) * (ctx.evasive ? 1 : W.CONNECT_GROUND));
 
   // ---- value of adding a set of auras ----
   function valueOfAdding(ids) {
@@ -490,20 +492,43 @@ export default function LightPawsConsole() {
     return m;
   }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights]);
 
+  // value of the auras a combo would let you TUTOR (each cast triggers Light-Paws' search).
+  // A cast aura of mana value m can fetch a deck aura of cost ≤ m, different name, not already
+  // controlled or in hand. Bigger casts pick first; each fetch claims a distinct target.
+  function fetchValueFor(comboIds) {
+    if (!comboIds.length) return 0;
+    const comboSet = new Set(comboIds);
+    const pool = deckAuras
+      .filter((a) => a.buff && a.canRide && !equipped.has(a.id) && !hand.has(a.id) && !comboSet.has(a.id))
+      .map((a) => ({ a, v: valueOfAdding([a.id]).score }))
+      .sort((x, y) => y.v - x.v);
+    const casts = comboIds.map((id) => deckAuras.find((a) => a.id === id)).filter(Boolean).sort((a, b) => b.cmc - a.cmc);
+    const claimed = new Set();
+    let total = 0;
+    for (const c of casts) {
+      for (const p of pool) {
+        if (claimed.has(p.a.id)) continue;
+        if (p.a.cmc <= c.cmc && p.v > 0) { total += p.v; claimed.add(p.a.id); break; }
+      }
+    }
+    return total;
+  }
+
   const best = useMemo(() => {
     const total = white + other;
+    const evalCombo = (ids) => { const base = valueOfAdding(ids); const fetch = fetchValueFor(ids); return { ...base, fetchValue: fetch, totalScore: base.score + fetch }; };
     const cands = handAuras.filter((a) => a.buff && !equipped.has(a.id) && a.canRide)
-      .map((a) => ({ a, s: valueOfAdding([a.id]).score })).sort((x, y) => y.s - x.s);
-    // mana not tracked (0): recommend the single best-value aura, no cost filtering
+      .map((a) => ({ a, s: evalCombo([a.id]).totalScore })).sort((x, y) => y.s - x.s);
+    // mana not tracked (0): recommend the single best aura (own value + its best fetch)
     if (total === 0) {
       const top = cands.filter((c) => c.s > 0.5)[0];
-      return { ids: top ? [top.a.id] : [], eval: top ? valueOfAdding([top.a.id]) : valueOfAdding([]), single: top ? top.a : null, noMana: true };
+      return { ids: top ? [top.a.id] : [], eval: top ? evalCombo([top.a.id]) : evalCombo([]), single: top ? top.a : null, noMana: true };
     }
-    let bestSet = [], bestScore = 0, bestEval = valueOfAdding([]); let nodes = 0;
+    let bestSet = [], bestScore = 0, bestEval = evalCombo([]); let nodes = 0;
     (function dfs(i, chosen, wU, tU) {
       if (nodes++ > 300000) return;
-      const ev = valueOfAdding(chosen);
-      if (ev.score > bestScore + 1e-9) { bestScore = ev.score; bestSet = [...chosen]; bestEval = ev; }
+      const ev = evalCombo(chosen);
+      if (ev.totalScore > bestScore + 1e-9) { bestScore = ev.totalScore; bestSet = [...chosen]; bestEval = ev; }
       for (let j = i; j < cands.length; j++) {
         const a = cands[j].a, nw = wU + a.cost.w, nt = tU + a.cmc;
         if (nw <= white && nt <= total) dfs(j + 1, [...chosen, a.id], nw, nt);
@@ -511,16 +536,26 @@ export default function LightPawsConsole() {
     })(0, [], 0, 0);
     const single = cands.filter(({ a }) => white >= a.cost.w && total >= a.cmc)[0];
     return { ids: bestSet, eval: bestEval, single: single ? single.a : null };
-  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights]);
+  }, [handAuras, equipped, hand, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, deckAuras]);
 
   // ---- actions ----
-  const equip = (id) => setEquipped((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const removeFromHand = (id) => setHand((s) => { if (!s.has(id)) return s; const n = new Set(s); n.delete(id); return n; });
+  const equip = (id) => {
+    setEquipped((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    removeFromHand(id); // equipping anywhere (incl. manual on Active) pulls it out of your hand
+  };
   const addToHand = (id) => setHand((s) => new Set(s).add(id));
-  const removeFromHand = (id) => setHand((s) => { const n = new Set(s); n.delete(id); return n; });
   const clearHand = () => setHand(new Set());
-  const castFromHand = (id) => { setEquipped((s) => new Set(s).add(id)); removeFromHand(id); };
+  // cast one or more auras from hand: attach them, remove from hand, then offer the fetch
+  const castMany = (ids) => {
+    setEquipped((s) => { const n = new Set(s); ids.forEach((id) => n.add(id)); return n; });
+    setHand((s) => { const n = new Set(s); ids.forEach((id) => n.delete(id)); return n; });
+    const mv = Math.max(1, ...ids.map((id) => { const a = deckAuras.find((x) => x.id === id); return a ? a.cmc : 1; }));
+    setPendingFetch({ count: ids.length, mv: Math.min(mv, 5) });
+  };
+  const castFromHand = (id) => castMany([id]);
   const toggleManual = (k) => setManualKw((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
-  const resetTurn = () => { setEquipped(new Set()); setManualKw(new Set()); setProtChoice({}); setHand(new Set()); };
+  const resetTurn = () => { setEquipped(new Set()); setManualKw(new Set()); setProtChoice({}); setHand(new Set()); setArtifacts(0); setOtherEnch(0); setPlains(0); };
 
   // ---- swipe between tabs ----
   const touch = useRef({ x: 0, y: 0 });
@@ -549,10 +584,10 @@ export default function LightPawsConsole() {
           <BoardTab {...{ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch }} />
         )}
         {tab === 1 && (
-          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights }} />
+          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights }} />
         )}
         {tab === 2 && (
-          <FetchTab {...{ deckAuras, equipped, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights }} />
+          <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv }} />
         )}
         {tab === 3 && (
           <DeckTab {...{ deck, setDeck, equipped, setEquipped, openInfo, synced: !!enriched, lib: LIB, onImport: importList, importing }} />
@@ -582,6 +617,20 @@ export default function LightPawsConsole() {
       </div>
 
       {infoCard && <CardInfoModal aura={infoCard} chosenPrint={chosenPrints[infoCard.name]} onClose={() => setInfoCard(null)} />}
+      {pendingFetch && (
+        <div onClick={() => setPendingFetch(null)} className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(0,0,0,0.65)" }}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl p-5" style={{ background: "#1a1e2b", border: "1px solid rgba(232,184,75,0.4)" }}>
+            <div className="font-bold text-lg mb-1" style={{ color: "#f0ead9" }}>Cast {pendingFetch.count > 1 ? `${pendingFetch.count} auras` : "aura"}</div>
+            <p className="text-sm mb-4" style={{ color: "#b7b1a2" }}>
+              {pendingFetch.count > 1 ? "Search your library for the first aura to attach to Light-Paws?" : "Search your library for an aura to attach to Light-Paws?"}
+            </p>
+            <div className="flex gap-2">
+              <button onClick={() => { setFetchMv(pendingFetch.mv); setTab(2); setPendingFetch(null); }} className="flex-1 text-sm font-bold rounded-lg py-2.5" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Go to Fetch</button>
+              <button onClick={() => setPendingFetch(null)} className="flex-1 text-sm font-bold rounded-lg py-2.5" style={{ background: "rgba(255,255,255,0.08)", color: "#cfc9ba" }}>Stay here</button>
+            </div>
+          </div>
+        </div>
+      )}
       {pickCard && <PrintingPicker card={pickCard} chosen={chosenPrints[pickCard.name]} onPick={(pr) => { choosePrint(pickCard.name, pr); setPickCard(null); }} onClose={() => setPickCard(null)} />}
     </div>
   );
@@ -674,32 +723,29 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
             <span className="text-sm font-black" style={{ color: "#e8b84b" }}>{equippedIds.length}</span>
             <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "#c79a3e" }}>Auras attached</span>
           </div>
-          <div className="flex items-center justify-center gap-3 mt-3 flex-wrap">
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Artifacts</span>
-              <MiniStep value={artifacts} set={setArtifacts} />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Enchant.</span>
-              <MiniStep value={otherEnch} set={setOtherEnch} />
-            </div>
-            <div className="flex items-center gap-1.5">
-              <span className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Plains</span>
-              <MiniStep value={plains} set={setPlains} />
-            </div>
-          </div>
-          <div className="text-[10px] mt-1 px-4 text-center" style={{ color: "#6f6a5d" }}>other permanents you control (attached auras are counted automatically) — feeds All That Glitters, Ethereal Armor & Armored Ascension</div>
         </div>
 
-        {/* mana */}
-        <div className="flex items-center justify-center gap-3 mt-3">
-          <ManaChip label="White" value={white} set={setWhite} gold />
-          <ManaChip label="Other" value={other} set={setOther} />
-          <div className="text-center px-1">
-            <div className="text-[10px] uppercase" style={{ color: "#8b8778" }}>Total</div>
-            <div className="text-lg font-bold leading-none" style={{ color: "#f0ead9" }}>{total}</div>
+        {/* protection (above the counters & mana) */}
+        <div className="px-3 mt-3">
+          <ProtectionTracker protAuras={ctx.on.filter((a) => a.prot)} protChoice={protChoice} setProt={setProt} />
+        </div>
+
+        {/* other permanents you control — one row, labels under each */}
+        <div className="flex items-start justify-center gap-6 mt-1">
+          <div className="flex flex-col items-center gap-1">
+            <MiniStep value={artifacts} set={setArtifacts} />
+            <span className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Artifacts</span>
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <MiniStep value={otherEnch} set={setOtherEnch} />
+            <span className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Enchants</span>
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <MiniStep value={plains} set={setPlains} />
+            <span className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Plains</span>
           </div>
         </div>
+        <div className="text-[10px] mt-1.5 px-4 text-center" style={{ color: "#6f6a5d" }}>other permanents you control (attached auras counted automatically) — feeds All That Glitters, Ethereal Armor &amp; Armored Ascension</div>
         {heroArtist && <div className="text-center text-[10px] mt-2" style={{ color: "#5f5a4e" }}>Art by {heroArtist} · © Wizards of the Coast</div>}
       </div>
 
@@ -723,7 +769,15 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
           ))}
         </div>
 
-        <ProtectionTracker protAuras={ctx.on.filter((a) => a.prot)} protChoice={protChoice} setProt={setProt} />
+        {/* mana (below the equipped list) */}
+        <div className="flex items-center justify-center gap-4 mb-3 rounded-xl py-2" style={{ background: "rgba(255,255,255,0.03)" }}>
+          <ManaChip label="White" value={white} set={setWhite} gold />
+          <ManaChip label="Other" value={other} set={setOther} />
+          <div className="text-center px-1">
+            <div className="text-[10px] uppercase" style={{ color: "#8b8778" }}>Total</div>
+            <div className="text-lg font-bold leading-none" style={{ color: "#f0ead9" }}>{total}</div>
+          </div>
+        </div>
 
         {/* search */}
         <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
@@ -778,10 +832,11 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
 
 /* ====================== TAB 2 · CAST (play from hand) ====================== */
 function PlayTab(p) {
-  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights } = p;
+  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights } = p;
   const [q, setQ] = useState("");
   const [adding, setAdding] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const searchRef = useRef(null);
   const total = white + other;
 
   const addable = deckAuras
@@ -845,19 +900,22 @@ function PlayTab(p) {
               <>
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {best.ids.map((id) => (
-                    <button key={id} onClick={() => castFromHand(id)} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold" style={{ background: "#f0ead9", color: "#221a09" }}>
+                    <span key={id} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold" style={{ background: "#f0ead9", color: "#221a09" }}>
                       {byName(id)} <ManaCost aura={handAuras.find((a) => a.id === id) || byId[id]} dark />
-                    </button>
+                    </span>
                   ))}
                 </div>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs" style={{ color: "#cfc9ba" }}>
+                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mb-2" style={{ color: "#cfc9ba" }}>
                   {!best.noMana && <span>Uses <b>{best.eval.manaTotal}</b> ({best.eval.manaW}W)</span>}
-                  <span>Score <b>{best.eval.score.toFixed(1)}</b></span>
+                  <span>Score <b>{(best.eval.totalScore != null ? best.eval.totalScore : best.eval.score).toFixed(1)}</b></span>
+                  {best.eval.fetchValue > 0 && <span style={{ color: "#93c7e6" }}>+{best.eval.fetchValue.toFixed(1)} from tutors</span>}
                   {best.eval.addP + best.eval.addT > 0 && <span>+{best.eval.addP}/+{best.eval.addT}</span>}
                   {best.eval.gainedKw.length > 0 && <span>Gains: {best.eval.gainedKw.join(", ")}</span>}
                 </div>
-                {best.noMana && <div className="text-[11px] mt-1" style={{ color: "#8b8778" }}>Set your mana above for a multi-aura best play — otherwise just cast any card below.</div>}
-                <div className="text-[11px] mt-1" style={{ color: "#8b8778" }}>Tap a suggestion to cast it (attaches to Light-Paws).</div>
+                <button onClick={() => castMany(best.ids)} className="w-full text-sm font-bold rounded-lg py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+                  Cast {best.ids.length > 1 ? `all ${best.ids.length}` : byName(best.ids[0])}
+                </button>
+                {best.noMana && <div className="text-[11px] mt-1.5" style={{ color: "#8b8778" }}>Set your mana above for a multi-aura best play.</div>}
               </>
             )}
           </div>
@@ -880,12 +938,12 @@ function PlayTab(p) {
         <>
           <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
             <Search size={16} style={{ color: "#8b8778" }} />
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search: name, keyword, or mana value" className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
+            <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search: name, keyword, or mana value" className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
             {q && <button onClick={() => setQ("")}><X size={15} style={{ color: "#8b8778" }} /></button>}
           </div>
           <div className="grid gap-1.5 mb-4">
             {addable.slice(0, 80).map((a) => (
-              <button key={a.id} onClick={() => addToHand(a.id)} className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+              <button key={a.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { addToHand(a.id); if (searchRef.current) searchRef.current.focus(); }} className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
                 <span className="font-semibold text-[14px] flex items-center gap-1.5" style={{ color: "#e6dfce" }}>{a.name} <ManaCost aura={a} />{!a.buff && <span className="text-[10px]" style={{ color: "#8b8778" }}>· removal</span>}</span>
                 <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(232,184,75,0.15)" }}><Plus size={16} style={{ color: "#e8b84b" }} /></span>
               </button>
@@ -1491,13 +1549,12 @@ function FetchRow({ a, ev, first, onEquip, onInfo }) {
 }
 
 /* ====================== TAB · FETCH (Light-Paws trigger) ====================== */
-function FetchTab({ deckAuras, equipped, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights }) {
-  const [mv, setMv] = useState(2);
+function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv }) {
   const [q, setQ] = useState("");
   const [showHelp, setShowHelp] = useState(false);
   const cap = mv >= 5 ? 99 : mv;
 
-  const pool = deckAuras.filter((a) => !equipped.has(a.id) && a.cmc <= cap && auraMatchesText(a, q));
+  const pool = deckAuras.filter((a) => !equipped.has(a.id) && !hand.has(a.id) && a.cmc <= cap && auraMatchesText(a, q));
   const buffs = pool.filter((a) => a.buff && a.canRide)
     .map((a) => ({ a, ev: valueOfAdding([a.id]) }))
     .sort((x, y) => y.ev.score - x.ev.score);
