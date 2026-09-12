@@ -834,7 +834,6 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
 function PlayTab(p) {
   const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights } = p;
   const [q, setQ] = useState("");
-  const [adding, setAdding] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const searchRef = useRef(null);
   const total = white + other;
@@ -883,9 +882,35 @@ function PlayTab(p) {
         {hand.size > 0 && <button onClick={clearHand} className="text-[11px] px-2 py-1 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>Clear hand</button>}
       </div>
 
+      {/* PROMINENT add-to-hand search — always visible */}
+      <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(232,184,75,0.09)", border: "1.5px solid rgba(232,184,75,0.55)" }}>
+        <div className="flex items-center gap-1.5 mb-2">
+          <Plus size={14} style={{ color: "#e8b84b" }} />
+          <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>Add the auras you're holding</span>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg px-3 py-2.5" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(232,184,75,0.45)" }}>
+          <Search size={18} style={{ color: "#e8b84b" }} />
+          <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Type a card you drew…" className="bg-transparent outline-none text-base w-full" style={{ color: "#ece7db" }} />
+          {q && <button onClick={() => setQ("")}><X size={16} style={{ color: "#8b8778" }} /></button>}
+        </div>
+        {q ? (
+          <div className="grid gap-1.5 mt-2">
+            {addable.slice(0, 60).map((a) => (
+              <button key={a.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { addToHand(a.id); if (searchRef.current) searchRef.current.focus(); }} className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                <span className="font-semibold text-[14px] flex items-center gap-1.5" style={{ color: "#e6dfce" }}>{a.name} <ManaCost aura={a} />{!a.buff && <span className="text-[10px]" style={{ color: "#8b8778" }}>· removal</span>}</span>
+                <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(232,184,75,0.2)" }}><Plus size={16} style={{ color: "#e8b84b" }} /></span>
+              </button>
+            ))}
+            {addable.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>No match — check spelling.</div>}
+          </div>
+        ) : (
+          <div className="text-[11px] mt-1.5" style={{ color: "#8b8778" }}>Type a card name, keyword, or mana value — tap a result to add it. Add all you can; the keyboard stays up.</div>
+        )}
+      </div>
+
       {hand.size === 0 ? (
         <div className="rounded-xl p-4 text-center text-sm mb-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.15)", color: "#8b8778" }}>
-          Your hand is empty. Tap <b style={{ color: "#e8b84b" }}>+ Add auras to hand</b> below to add the ones you're holding.
+          Your hand is empty — use the gold box above to add the cards you're holding.
         </div>
       ) : (
         <>
@@ -926,29 +951,6 @@ function PlayTab(p) {
                 onCast={() => (a.buff && a.canRide ? castFromHand(a.id) : removeFromHand(a.id))}
                 onRemove={() => removeFromHand(a.id)} onInfo={() => openInfo(a)} />
             ))}
-          </div>
-        </>
-      )}
-
-      {/* add to hand */}
-      <button onClick={() => setAdding((v) => !v)} className="w-full text-sm font-bold rounded-lg py-2 mb-2 flex items-center justify-center gap-1.5" style={{ background: "rgba(232,184,75,0.15)", color: "#e8b84b", border: "1px solid rgba(232,184,75,0.4)" }}>
-        <Plus size={15} /> Add auras to hand {adding ? "▲" : "▼"}
-      </button>
-      {adding && (
-        <>
-          <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
-            <Search size={16} style={{ color: "#8b8778" }} />
-            <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search: name, keyword, or mana value" className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
-            {q && <button onClick={() => setQ("")}><X size={15} style={{ color: "#8b8778" }} /></button>}
-          </div>
-          <div className="grid gap-1.5 mb-4">
-            {addable.slice(0, 80).map((a) => (
-              <button key={a.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { addToHand(a.id); if (searchRef.current) searchRef.current.focus(); }} className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-                <span className="font-semibold text-[14px] flex items-center gap-1.5" style={{ color: "#e6dfce" }}>{a.name} <ManaCost aura={a} />{!a.buff && <span className="text-[10px]" style={{ color: "#8b8778" }}>· removal</span>}</span>
-                <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(232,184,75,0.15)" }}><Plus size={16} style={{ color: "#e8b84b" }} /></span>
-              </button>
-            ))}
-            {addable.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>Nothing left to add.</div>}
           </div>
         </>
       )}
