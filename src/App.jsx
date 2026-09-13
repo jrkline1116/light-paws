@@ -261,6 +261,7 @@ export default function LightPawsConsole() {
   const [tab, setTab] = useState(0);
   const [fetchMv, setFetchMv] = useState(2);          // lifted from Fetch tab so Cast can pre-set it
   const [pendingFetch, setPendingFetch] = useState(null); // {count, mv} → shows the "go to Fetch?" popup
+  const [castLoop, setCastLoop] = useState(null); // {remaining:[ids]} while walking a multi-aura best play
   const [deck, setDeck] = useState(() => new Set(LS.get("deck", DEFAULT_DECK)));
   const [equipped, setEquipped] = useState(() => new Set(LS.get("equipped", [])));
   const [manualKw, setManualKw] = useState(() => new Set(LS.get("manual", [])));
@@ -554,6 +555,18 @@ export default function LightPawsConsole() {
     setPendingFetch({ count: ids.length, mv: Math.min(mv, 5) });
   };
   const castFromHand = (id) => castMany([id]);
+  // ---- Cast & Fetch loop (for multi-aura best plays): cast one → fetch → back → next ----
+  const startCastLoop = (ids) => setCastLoop({ remaining: [...ids] });
+  const exitCastLoop = () => setCastLoop(null);
+  const castLoopPick = (id) => {
+    const a = deckAuras.find((x) => x.id === id);
+    setEquipped((s) => new Set(s).add(id));
+    setHand((s) => { const n = new Set(s); n.delete(id); return n; });
+    setCastLoop((prev) => ({ remaining: (prev ? prev.remaining : []).filter((x) => x !== id) }));
+    setFetchMv(a ? Math.min(a.cmc, 5) : 2);
+    setTab(2);
+  };
+  const backToCast = () => { setTab(1); setCastLoop((prev) => (prev && prev.remaining.length === 0 ? null : prev)); };
   const toggleManual = (k) => setManualKw((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const resetTurn = () => { setEquipped(new Set()); setManualKw(new Set()); setProtChoice({}); setHand(new Set()); setArtifacts(0); setOtherEnch(0); setPlains(0); };
 
@@ -584,10 +597,10 @@ export default function LightPawsConsole() {
           <BoardTab {...{ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch }} />
         )}
         {tab === 1 && (
-          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights }} />
+          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop }} />
         )}
         {tab === 2 && (
-          <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv }} />
+          <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast }} />
         )}
         {tab === 3 && (
           <DeckTab {...{ deck, setDeck, equipped, setEquipped, openInfo, synced: !!enriched, lib: LIB, onImport: importList, importing }} />
@@ -709,15 +722,12 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
           })}
         </div>
 
-        {/* P/T + damage */}
+        {/* P/T */}
         <div className="text-center -mt-1">
           <div className="inline-flex items-baseline gap-2">
             <span className="text-5xl font-black" style={{ color: "#f4ecd8", textShadow: "0 2px 10px rgba(0,0,0,0.5)" }}>{curPower}</span>
             <span className="text-2xl font-bold" style={{ color: "#c79a3e" }}>/</span>
             <span className="text-5xl font-black" style={{ color: "#f4ecd8", textShadow: "0 2px 10px rgba(0,0,0,0.5)" }}>{curTough}</span>
-          </div>
-          <div className="text-[12px] mt-0.5" style={{ color: "#9a9484" }}>
-            Projected combat dmg ≈ <b style={{ color: "#e8b84b" }}>{projDmg}</b>{curDS && " (double strike)"} · {ctx.evasive ? "evasive" : "likely blocked"}
           </div>
           <div className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 mt-2" style={{ background: "rgba(232,184,75,0.14)", border: "1px solid rgba(232,184,75,0.4)" }}>
             <span className="text-sm font-black" style={{ color: "#e8b84b" }}>{equippedIds.length}</span>
@@ -832,7 +842,7 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
 
 /* ====================== TAB 2 · CAST (play from hand) ====================== */
 function PlayTab(p) {
-  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights } = p;
+  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop } = p;
   const [q, setQ] = useState("");
   const [showHelp, setShowHelp] = useState(false);
   const searchRef = useRef(null);
@@ -896,7 +906,7 @@ function PlayTab(p) {
         {q ? (
           <div className="grid gap-1.5 mt-2">
             {addable.slice(0, 60).map((a) => (
-              <button key={a.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { addToHand(a.id); if (searchRef.current) searchRef.current.focus(); }} className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
+              <button key={a.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { addToHand(a.id); setQ(""); if (searchRef.current) searchRef.current.focus(); }} className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
                 <span className="font-semibold text-[14px] flex items-center gap-1.5" style={{ color: "#e6dfce" }}>{a.name} <ManaCost aura={a} />{!a.buff && <span className="text-[10px]" style={{ color: "#8b8778" }}>· removal</span>}</span>
                 <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(232,184,75,0.2)" }}><Plus size={16} style={{ color: "#e8b84b" }} /></span>
               </button>
@@ -914,6 +924,26 @@ function PlayTab(p) {
         </div>
       ) : (
         <>
+          {castLoop && castLoop.remaining.length > 0 ? (
+            <div className="rounded-xl p-3 mb-3" style={{ background: "linear-gradient(160deg, rgba(232,184,75,0.18), rgba(232,184,75,0.05))", border: "1.5px solid #e8b84b" }}>
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-sm font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>Cast &amp; fetch — which aura next?</span>
+                <button onClick={exitCastLoop} title="Exit loop"><X size={16} style={{ color: "#cfc9ba" }} /></button>
+              </div>
+              <p className="text-[11px] mb-2" style={{ color: "#b7b1a2" }}>Pick one to cast — it'll take you to Fetch to grab a tutor, then bring you back for the next. ({castLoop.remaining.length} left)</p>
+              <div className="grid gap-1.5">
+                {castLoop.remaining.map((id) => {
+                  const a = handAuras.find((x) => x.id === id) || byId[id];
+                  return (
+                    <button key={id} onClick={() => castLoopPick(id)} className="flex items-center justify-between rounded-lg px-3 py-2.5" style={{ background: "#f0ead9", color: "#221a09" }}>
+                      <span className="font-bold text-[15px] flex items-center gap-1.5">{a ? a.name : byName(id)} <ManaCost aura={a} dark /></span>
+                      <span className="text-xs font-bold">Cast &amp; fetch →</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : (
           <div className="rounded-xl p-3 mb-3" style={{ background: "linear-gradient(160deg, rgba(232,184,75,0.14), rgba(232,184,75,0.05))", border: "1.5px solid #e8b84b" }}>
             <div className="flex items-center gap-1.5 mb-1.5">
               <Star size={15} style={{ color: "#e8b84b" }} fill="#e8b84b" />
@@ -931,19 +961,25 @@ function PlayTab(p) {
                   ))}
                 </div>
                 <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs mb-2" style={{ color: "#cfc9ba" }}>
-                  {!best.noMana && <span>Uses <b>{best.eval.manaTotal}</b> ({best.eval.manaW}W)</span>}
+                  {!best.noMana && <span>Uses <b>{best.eval.manaTotal}</b> of {total} mana{total - best.eval.manaTotal > 0 && <> · <b>{total - best.eval.manaTotal}</b> open</>}</span>}
                   <span>Score <b>{(best.eval.totalScore != null ? best.eval.totalScore : best.eval.score).toFixed(1)}</b></span>
                   {best.eval.fetchValue > 0 && <span style={{ color: "#93c7e6" }}>+{best.eval.fetchValue.toFixed(1)} from tutors</span>}
-                  {best.eval.addP + best.eval.addT > 0 && <span>+{best.eval.addP}/+{best.eval.addT}</span>}
                   {best.eval.gainedKw.length > 0 && <span>Gains: {best.eval.gainedKw.join(", ")}</span>}
                 </div>
-                <button onClick={() => castMany(best.ids)} className="w-full text-sm font-bold rounded-lg py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
-                  Cast {best.ids.length > 1 ? `all ${best.ids.length}` : byName(best.ids[0])}
-                </button>
+                {best.ids.length > 1 ? (
+                  <button onClick={() => startCastLoop(best.ids)} className="w-full text-sm font-bold rounded-lg py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+                    Cast &amp; Fetch Multiple ({best.ids.length}) →
+                  </button>
+                ) : (
+                  <button onClick={() => castMany(best.ids)} className="w-full text-sm font-bold rounded-lg py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+                    Cast {byName(best.ids[0])}
+                  </button>
+                )}
                 {best.noMana && <div className="text-[11px] mt-1.5" style={{ color: "#8b8778" }}>Set your mana above for a multi-aura best play.</div>}
               </>
             )}
           </div>
+          )}
 
           <div className="grid gap-1.5 mb-3">
             {handAuras.map((a) => (
@@ -1551,7 +1587,7 @@ function FetchRow({ a, ev, first, onEquip, onInfo }) {
 }
 
 /* ====================== TAB · FETCH (Light-Paws trigger) ====================== */
-function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv }) {
+function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv, loopActive, onBackToCast }) {
   const [q, setQ] = useState("");
   const [showHelp, setShowHelp] = useState(false);
   const cap = mv >= 5 ? 99 : mv;
@@ -1563,6 +1599,11 @@ function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, c
 
   return (
     <div className="px-3 pt-4">
+      {loopActive && (
+        <button onClick={onBackToCast} className="w-full text-sm font-bold rounded-lg py-2.5 mb-3 flex items-center justify-center gap-1.5" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+          ← Back to casting your best play
+        </button>
+      )}
       <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Fetch · trigger tutor</div>
       <p className="text-xs mb-1" style={{ color: "#8b8778" }}>
         Cast an Aura, then tap its mana value. Light-Paws fetches any Aura of that value <b>or less</b> whose name you don't already control — ranked best-first for your board (Light-Paws is {curPower}/{curTough}).
