@@ -568,7 +568,7 @@ export default function LightPawsConsole() {
   };
   const backToCast = () => { setTab(1); setCastLoop((prev) => (prev && prev.remaining.length === 0 ? null : prev)); };
   const toggleManual = (k) => setManualKw((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
-  const resetTurn = () => { setEquipped(new Set()); setManualKw(new Set()); setProtChoice({}); setHand(new Set()); setArtifacts(0); setOtherEnch(0); setPlains(0); };
+  const resetTurn = () => { setEquipped(new Set()); setManualKw(new Set()); setProtChoice({}); setHand(new Set()); setArtifacts(0); setOtherEnch(0); setPlains(0); setWhite(2); setOther(0); };
 
   // ---- swipe between tabs ----
   const touch = useRef({ x: 0, y: 0 });
@@ -724,14 +724,16 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
 
         {/* P/T */}
         <div className="text-center -mt-1">
-          <div className="inline-flex items-baseline gap-2">
+          <div className="flex items-baseline justify-center gap-2">
             <span className="text-5xl font-black" style={{ color: "#f4ecd8", textShadow: "0 2px 10px rgba(0,0,0,0.5)" }}>{curPower}</span>
             <span className="text-2xl font-bold" style={{ color: "#c79a3e" }}>/</span>
             <span className="text-5xl font-black" style={{ color: "#f4ecd8", textShadow: "0 2px 10px rgba(0,0,0,0.5)" }}>{curTough}</span>
           </div>
-          <div className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 mt-2" style={{ background: "rgba(232,184,75,0.14)", border: "1px solid rgba(232,184,75,0.4)" }}>
-            <span className="text-sm font-black" style={{ color: "#e8b84b" }}>{equippedIds.length}</span>
-            <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "#c79a3e" }}>Auras attached</span>
+          <div className="mt-2">
+            <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1" style={{ background: "rgba(232,184,75,0.14)", border: "1px solid rgba(232,184,75,0.4)" }}>
+              <span className="text-sm font-black" style={{ color: "#e8b84b" }}>{equippedIds.length}</span>
+              <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "#c79a3e" }}>Auras attached</span>
+            </span>
           </div>
         </div>
 
