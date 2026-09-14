@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   Feather, Sword, Swords, Eye, EyeOff, Heart, ShieldCheck, ShieldHalf, Gem, Umbrella,
-  Sparkles, Search, Upload, Layers, Database, Plus, Minus, X, Star, RotateCcw, Check, Lock, Filter, Wand2,
+  Sparkles, Search, Upload, Layers, Database, Plus, Minus, X, Star, RotateCcw, Check, Lock, Filter, Wand2, ChevronsRight,
 } from "lucide-react";
 
 /* ============================================================
@@ -17,13 +17,15 @@ const AD_SLOT    = "";   // AdSense ad-unit slot id, e.g. "1234567890"
    ============================================================ */
 
 // ---- scoring constants ----
-const P_VAL = 1.0, T_VAL = 0.5, DRAW_VAL = 2, TOKEN_NOW = 1.5, TOKEN_COND = 0.75, ETB_REMOVAL = 3;
+const P_VAL = 1.0, T_VAL = 0.5, DRAW_VAL = 1, TOKEN_NOW = 1.5, TOKEN_COND = 0.75, ETB_REMOVAL = 3;
+const LETHAL_BONUS = 25;  // a play that reaches the lethal threshold dominates everything else
 const CONNECT_EVASIVE = 0.85, CONNECT_GROUND = 0.45;
 
 // ---- keyword metadata (order = ring order, starting top, clockwise) ----
 const KW = {
   flying:        { label: "Flying",        w: 2, Icon: Feather },
   doubleStrike:  { label: "Double strike", w: 4, Icon: Swords },
+  trample:       { label: "Trample",       w: 2, Icon: ChevronsRight },
   firstStrike:   { label: "First strike",  w: 2, Icon: Sword },
   vigilance:     { label: "Vigilance",     w: 2, Icon: Eye },
   lifelink:      { label: "Lifelink",      w: 3, Icon: Heart },
@@ -38,7 +40,7 @@ const KW_ORDER = Object.keys(KW);
 // default scoring weights (users can override these in the app; persisted)
 const DEFAULT_WEIGHTS = {
   ...Object.fromEntries(Object.keys(KW).map((k) => [k, KW[k].w])),
-  P_VAL, T_VAL, DRAW_VAL, TOKEN_NOW, TOKEN_COND, ETB_REMOVAL, CONNECT_EVASIVE, CONNECT_GROUND,
+  P_VAL, T_VAL, DRAW_VAL, TOKEN_NOW, TOKEN_COND, ETB_REMOVAL, CONNECT_EVASIVE, CONNECT_GROUND, LETHAL_BONUS,
 };
 
 const COLORS = [
@@ -261,10 +263,12 @@ export default function LightPawsConsole() {
   const [tab, setTab] = useState(0);
   const [fetchMv, setFetchMv] = useState(2);          // lifted from Fetch tab so Cast can pre-set it
   const [pendingFetch, setPendingFetch] = useState(null); // {count, mv} → shows the "go to Fetch?" popup
-  const [castLoop, setCastLoop] = useState(null); // {remaining:[ids]} while walking a multi-aura best play
+  const [castLoop, setCastLoop] = useState(null);
+  const [protPrompt, setProtPrompt] = useState(null); // aura needing a protection color // {remaining:[ids]} while walking a multi-aura best play
   const [deck, setDeck] = useState(() => new Set(LS.get("deck", DEFAULT_DECK)));
   const [equipped, setEquipped] = useState(() => new Set(LS.get("equipped", [])));
   const [manualKw, setManualKw] = useState(() => new Set(LS.get("manual", [])));
+  const [lethalNeed, setLethalNeed] = useState(() => LS.get("lethalNeed", 21));
   const [white, setWhite] = useState(() => LS.get("white", 2));
   const [other, setOther] = useState(() => LS.get("other", 0));
   const [baseP, setBaseP] = useState(() => LS.get("baseP", 2));
@@ -288,6 +292,7 @@ export default function LightPawsConsole() {
   useEffect(() => { LS.set("deck", [...deck]); }, [deck]);
   useEffect(() => { LS.set("equipped", [...equipped]); }, [equipped]);
   useEffect(() => { LS.set("manual", [...manualKw]); }, [manualKw]);
+  useEffect(() => { LS.set("lethalNeed", lethalNeed); }, [lethalNeed]);
   useEffect(() => { LS.set("white", white); }, [white]);
   useEffect(() => { LS.set("other", other); }, [other]);
   useEffect(() => { LS.set("baseP", baseP); }, [baseP]);
@@ -477,7 +482,16 @@ export default function LightPawsConsole() {
     });
     effScore += draws * W.DRAW_VAL;
 
-    return { score: kwScore + statScore + effScore, gainedKw, addP, addT, draws,
+    // LETHAL: if this play's swing reaches the threshold, it wins — that dominates everything.
+    // Damage = final power, doubled for double strike. Evasion doesn't reduce it here; the
+    // threshold is what YOU need to connect for, and the player decides if it gets through.
+    const finalDS = finalHave.has("doubleStrike");
+    const swing = projPower * (finalDS ? 2 : 1);
+    const wasLethal = (baseP + ctx.addP) * (hasKw(before, "doubleStrike") ? 2 : 1) >= lethalNeed;
+    const lethalScore = (!wasLethal && lethalNeed > 0 && swing >= lethalNeed) ? W.LETHAL_BONUS : 0;
+    if (lethalScore) gainedKw.push(`LETHAL (${swing})`);
+
+    return { score: kwScore + statScore + effScore + lethalScore, gainedKw, addP, addT, draws, swing, lethal: lethalScore > 0,
       manaW: set.reduce((s, a) => s + a.cost.w, 0), manaTotal: set.reduce((s, a) => s + a.cmc, 0) };
   }
 
@@ -491,7 +505,7 @@ export default function LightPawsConsole() {
       m[a.id] = { onBoard, affordable, marginal, redundant };
     });
     return m;
-  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights]);
+  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed]);
 
   // value of the auras a combo would let you TUTOR (each cast triggers Light-Paws' search).
   // A cast aura of mana value m can fetch a deck aura of cost ≤ m, different name, not already
@@ -537,13 +551,20 @@ export default function LightPawsConsole() {
     })(0, [], 0, 0);
     const single = cands.filter(({ a }) => white >= a.cost.w && total >= a.cmc)[0];
     return { ids: bestSet, eval: bestEval, single: single ? single.a : null };
-  }, [handAuras, equipped, hand, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, deckAuras]);
+  }, [handAuras, equipped, hand, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed, deckAuras]);
 
   // ---- actions ----
   const removeFromHand = (id) => setHand((s) => { if (!s.has(id)) return s; const n = new Set(s); n.delete(id); return n; });
+  // if a newly attached aura needs a protection color chosen, prompt immediately
+  const maybePromptProt = (ids) => {
+    const needs = ids.map((id) => deckAuras.find((x) => x.id === id)).find((a) => a && a.prot === "choice" && !protChoice[a.id]);
+    if (needs) setProtPrompt(needs);
+  };
   const equip = (id) => {
-    setEquipped((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    let attaching = false;
+    setEquipped((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else { n.add(id); attaching = true; } return n; });
     removeFromHand(id); // equipping anywhere (incl. manual on Active) pulls it out of your hand
+    setTimeout(() => { if (attaching) maybePromptProt([id]); }, 0);
   };
   const addToHand = (id) => setHand((s) => new Set(s).add(id));
   const clearHand = () => setHand(new Set());
@@ -552,6 +573,7 @@ export default function LightPawsConsole() {
     setEquipped((s) => { const n = new Set(s); ids.forEach((id) => n.add(id)); return n; });
     setHand((s) => { const n = new Set(s); ids.forEach((id) => n.delete(id)); return n; });
     const mv = Math.max(1, ...ids.map((id) => { const a = deckAuras.find((x) => x.id === id); return a ? a.cmc : 1; }));
+    maybePromptProt(ids);
     setPendingFetch({ count: ids.length, mv: Math.min(mv, 5) });
   };
   const castFromHand = (id) => castMany([id]);
@@ -563,6 +585,7 @@ export default function LightPawsConsole() {
     setEquipped((s) => new Set(s).add(id));
     setHand((s) => { const n = new Set(s); n.delete(id); return n; });
     setCastLoop((prev) => ({ remaining: (prev ? prev.remaining : []).filter((x) => x !== id) }));
+    maybePromptProt([id]);
     setFetchMv(a ? Math.min(a.cmc, 5) : 2);
     setTab(2);
   };
@@ -594,13 +617,13 @@ export default function LightPawsConsole() {
       <div className="max-w-lg mx-auto pb-24" onTouchStart={onTS} onTouchEnd={onTE}>
 
         {tab === 0 && (
-          <BoardTab {...{ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch }} />
+          <BoardTab {...{ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, lethalNeed, setLethalNeed, curDS }} />
         )}
         {tab === 1 && (
-          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop }} />
+          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds }} />
         )}
         {tab === 2 && (
-          <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast }} />
+          <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast, ctx, equippedIds, curDS, resetTurn }} />
         )}
         {tab === 3 && (
           <DeckTab {...{ deck, setDeck, equipped, setEquipped, openInfo, synced: !!enriched, lib: LIB, onImport: importList, importing }} />
@@ -630,6 +653,23 @@ export default function LightPawsConsole() {
       </div>
 
       {infoCard && <CardInfoModal aura={infoCard} chosenPrint={chosenPrints[infoCard.name]} onClose={() => setInfoCard(null)} />}
+      {protPrompt && (
+        <div onClick={() => setProtPrompt(null)} className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(0,0,0,0.65)" }}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl p-5" style={{ background: "#1a1e2b", border: "1px solid rgba(147,199,230,0.5)" }}>
+            <div className="font-bold text-lg mb-1" style={{ color: "#f0ead9" }}>{protPrompt.name}</div>
+            <p className="text-sm mb-4" style={{ color: "#b7b1a2" }}>Choose the color you named for protection. You can change it later on the Active tab.</p>
+            <div className="flex items-center justify-center gap-3 mb-4">
+              {COLORS.map((c) => (
+                <button key={c.key} onClick={() => { setProt(protPrompt.id, c.key); setProtPrompt(null); }} title={c.label}
+                  className="rounded-full flex items-center justify-center" style={{ width: 44, height: 44, background: c.hex, border: "2px solid rgba(0,0,0,0.35)" }}>
+                  <span className="text-base font-black" style={{ color: c.fg }}>{c.label[0]}</span>
+                </button>
+              ))}
+            </div>
+            <button onClick={() => setProtPrompt(null)} className="w-full text-sm font-bold rounded-lg py-2" style={{ background: "rgba(255,255,255,0.08)", color: "#cfc9ba" }}>Choose later</button>
+          </div>
+        </div>
+      )}
       {pendingFetch && (
         <div onClick={() => setPendingFetch(null)} className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(0,0,0,0.65)" }}>
           <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl p-5" style={{ background: "#1a1e2b", border: "1px solid rgba(232,184,75,0.4)" }}>
@@ -652,7 +692,7 @@ export default function LightPawsConsole() {
 function byName(id) { return byId[id] ? byId[id].name : id; }
 
 /* ====================== TAB 1 · BOARD ====================== */
-function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch }) {
+function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, lethalNeed, setLethalNeed }) {
   const [q, setQ] = useState("");
   const [filters, setFilters] = useState(() => new Set());
   const [cmc, setCmc] = useState(() => new Set());
@@ -728,13 +768,21 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
             <span className="text-5xl font-black" style={{ color: "#f4ecd8", textShadow: "0 2px 10px rgba(0,0,0,0.5)" }}>{curPower}</span>
             <span className="text-2xl font-bold" style={{ color: "#c79a3e" }}>/</span>
             <span className="text-5xl font-black" style={{ color: "#f4ecd8", textShadow: "0 2px 10px rgba(0,0,0,0.5)" }}>{curTough}</span>
+            {curDS && <span className="text-lg font-black ml-1" style={{ color: "#e8b84b" }}>×2 = {curPower * 2}</span>}
           </div>
-          <div className="mt-2">
+          <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
             <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1" style={{ background: "rgba(232,184,75,0.14)", border: "1px solid rgba(232,184,75,0.4)" }}>
               <span className="text-sm font-black" style={{ color: "#e8b84b" }}>{equippedIds.length}</span>
               <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "#c79a3e" }}>Auras attached</span>
             </span>
+            <span className="inline-flex items-center gap-1.5 rounded-full pl-3 pr-1.5 py-0.5" style={{ background: (curPower * (curDS ? 2 : 1)) >= lethalNeed && lethalNeed > 0 ? "rgba(143,211,154,0.18)" : "rgba(255,255,255,0.05)", border: (curPower * (curDS ? 2 : 1)) >= lethalNeed && lethalNeed > 0 ? "1px solid #8fd39a" : "1px solid rgba(255,255,255,0.12)" }}>
+              <span className="text-[10px] uppercase tracking-wide" style={{ color: (curPower * (curDS ? 2 : 1)) >= lethalNeed && lethalNeed > 0 ? "#8fd39a" : "#8b8778" }}>Lethal at</span>
+              <MiniStep value={lethalNeed} set={setLethalNeed} />
+            </span>
           </div>
+          {lethalNeed > 0 && (curPower * (curDS ? 2 : 1)) >= lethalNeed && (
+            <div className="text-[11px] font-bold mt-1" style={{ color: "#8fd39a" }}>Swing is lethal ({curPower * (curDS ? 2 : 1)} ≥ {lethalNeed})</div>
+          )}
         </div>
 
         {/* protection (above the counters & mana) */}
@@ -844,7 +892,7 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
 
 /* ====================== TAB 2 · CAST (play from hand) ====================== */
 function PlayTab(p) {
-  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop } = p;
+  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds } = p;
   const [q, setQ] = useState("");
   const [showHelp, setShowHelp] = useState(false);
   const searchRef = useRef(null);
@@ -856,8 +904,16 @@ function PlayTab(p) {
 
   return (
     <div className="px-3 pt-4">
-      <div className="text-[10px] tracking-[0.3em] uppercase" style={{ color: "#c79a3e" }}>Cast · from hand</div>
-      <p className="text-xs mb-2" style={{ color: "#8b8778" }}>Add the auras you're actually holding, then get the best play for your mana. Casting one triggers Light-Paws — grab the free aura on the Fetch tab.</p>
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[10px] tracking-[0.3em] uppercase" style={{ color: "#c79a3e" }}>Cast · from hand</div>
+          <p className="text-xs mb-2" style={{ color: "#8b8778" }}>Add the auras you're actually holding, then get the best play for your mana. Casting one triggers Light-Paws — grab the free aura on the Fetch tab.</p>
+        </div>
+        <button onClick={resetTurn} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>
+          <RotateCcw size={13} /> Reset
+        </button>
+      </div>
+      <BoardPeek {...{ curPower, curTough, curDS, ctx, equippedIds, deckAuras, byName }} />
 
       {/* mana */}
       <Card>
@@ -1559,42 +1615,82 @@ function summaryLine(ev) {
   return parts.join(" · ");
 }
 
+// collapsible "what's on Light-Paws right now" summary for the Cast/Fetch tabs
+function BoardPeek({ curPower, curTough, curDS, ctx, equippedIds, deckAuras, byName }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mb-2">
+      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center justify-between rounded-lg px-3 py-1.5"
+        style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+        <span className="text-[11px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Light-Paws now</span>
+        <span className="flex items-center gap-2">
+          <span className="text-sm font-bold" style={{ color: "#f0ead9" }}>{curPower}/{curTough}{curDS && <span style={{ color: "#e8b84b" }}> ×2={curPower * 2}</span>}</span>
+          <span className="text-[11px]" style={{ color: "#c79a3e" }}>{equippedIds.length} auras {open ? "▲" : "▼"}</span>
+        </span>
+      </button>
+      {open && (
+        <div className="rounded-lg px-3 py-2 mt-1" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
+          <div className="flex flex-wrap gap-1 mb-1.5">
+            {KW_ORDER.filter((k) => hasKw(ctx.have, k)).map((k) => (
+              <span key={k} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(232,184,75,0.18)", color: "#e8b84b" }}>{KW[k].label}</span>
+            ))}
+            {KW_ORDER.filter((k) => hasKw(ctx.have, k)).length === 0 && <span className="text-[11px] italic" style={{ color: "#6f6a5d" }}>No keywords yet</span>}
+          </div>
+          <div className="flex flex-wrap gap-1">
+            {equippedIds.map((id) => (
+              <span key={id} className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,0.07)", color: "#cfc9ba" }}>
+                {(deckAuras.find((a) => a.id === id) || {}).name || byName(id)}
+              </span>
+            ))}
+            {equippedIds.length === 0 && <span className="text-[11px] italic" style={{ color: "#6f6a5d" }}>Nothing attached</span>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FetchRow({ a, ev, first, onEquip, onInfo }) {
-  const [confirm, setConfirm] = useState(false);
-  const h = useTapHold(() => setConfirm(true), onInfo);
+  const h = useTapHold(() => onInfo(), () => onInfo());
   const stop = (e) => e.stopPropagation();
   return (
     <div {...h} className="text-left rounded-lg px-3 py-2 transition"
-      style={{ background: first || confirm ? "linear-gradient(160deg, rgba(232,184,75,0.14), rgba(232,184,75,0.05))" : "rgba(255,255,255,0.04)", border: first || confirm ? "1.5px solid #e8b84b" : "1px solid rgba(255,255,255,0.08)", cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
+      style={{ background: first ? "linear-gradient(160deg, rgba(232,184,75,0.14), rgba(232,184,75,0.05))" : "rgba(255,255,255,0.04)", border: first ? "1.5px solid #e8b84b" : "1px solid rgba(255,255,255,0.08)", cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
       <div className="flex items-center justify-between gap-2">
-        <div className="font-bold text-[15px] flex items-center gap-1.5" style={{ color: "#f0ead9" }}>
-          {first && <Star size={13} style={{ color: "#e8b84b" }} fill="#e8b84b" />}
-          {a.name} <ManaCost aura={a} />
+        <div className="min-w-0">
+          <div className="font-bold text-[15px] flex items-center gap-1.5" style={{ color: "#f0ead9" }}>
+            {first && <Star size={13} style={{ color: "#e8b84b" }} fill="#e8b84b" />}
+            {a.name} <ManaCost aura={a} />
+          </div>
+          <div className="text-[12px] mt-0.5" style={{ color: "#b7b1a2" }}>{summaryLine(ev) || "No new effect on your current board"}</div>
         </div>
-        {confirm ? (
-          <div className="flex items-center gap-1.5 flex-shrink-0">
-            <button onClick={(e) => { stop(e); onEquip(); }} onPointerDown={stop} onPointerUp={stop} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Add</button>
-            <button onClick={(e) => { stop(e); setConfirm(false); }} onPointerDown={stop} onPointerUp={stop} className="rounded-lg px-2 py-1.5" style={{ background: "rgba(255,255,255,0.08)" }}><X size={15} style={{ color: "#cfc9ba" }} /></button>
-          </div>
-        ) : (
-          <div className="text-right flex-shrink-0">
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="text-right">
             <div className="text-[9px] uppercase" style={{ color: "#6f6a5d" }}>value</div>
-            <div className="text-lg font-bold leading-none" style={{ color: "#e8b84b" }}>{ev.score.toFixed(1)}</div>
+            <div className="text-base font-bold leading-none" style={{ color: "#e8b84b" }}>{ev.score.toFixed(1)}</div>
           </div>
-        )}
+          <button onClick={(e) => { stop(e); onEquip(); }} onPointerDown={stop} onPointerUp={stop}
+            className="text-xs font-bold rounded-lg px-3 py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Add</button>
+        </div>
       </div>
-      <div className="text-[12px] mt-1" style={{ color: "#b7b1a2" }}>{summaryLine(ev) || "No new effect on your current board"}</div>
     </div>
   );
 }
 
 /* ====================== TAB · FETCH (Light-Paws trigger) ====================== */
-function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv, loopActive, onBackToCast }) {
+function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv, loopActive, onBackToCast, ctx, equippedIds, curDS, resetTurn }) {
   const [q, setQ] = useState("");
+  const [kwFilters, setKwFilters] = useState(() => new Set());
   const [showHelp, setShowHelp] = useState(false);
   const cap = mv >= 5 ? 99 : mv;
 
-  const pool = deckAuras.filter((a) => !equipped.has(a.id) && !hand.has(a.id) && a.cmc <= cap && auraMatchesText(a, q));
+  const inRange = deckAuras.filter((a) => !equipped.has(a.id) && !hand.has(a.id) && a.cmc <= cap);
+  // only offer filters for keywords that actually exist among fetchable auras at this cost
+  const availableKw = KW_ORDER.filter((k) => inRange.some((a) => a.buff && a.canRide && a.kw.includes(k)));
+  const toggleKw = (k) => setKwFilters((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  useEffect(() => { setKwFilters((s) => { const n = new Set([...s].filter((k) => availableKw.includes(k))); return n.size === s.size ? s : n; }); }, [mv]);
+
+  const pool = inRange.filter((a) => auraMatchesText(a, q) && (!kwFilters.size || [...kwFilters].every((k) => a.kw.includes(k))));
   const buffs = pool.filter((a) => a.buff && a.canRide)
     .map((a) => ({ a, ev: valueOfAdding([a.id]) }))
     .sort((x, y) => y.ev.score - x.ev.score);
@@ -1606,7 +1702,13 @@ function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, c
           ← Back to casting your best play
         </button>
       )}
-      <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Fetch · trigger tutor</div>
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Fetch · trigger tutor</div>
+        <button onClick={resetTurn} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>
+          <RotateCcw size={13} /> Reset
+        </button>
+      </div>
+      <BoardPeek {...{ curPower, curTough, curDS, ctx, equippedIds, deckAuras, byName }} />
       <p className="text-xs mb-1" style={{ color: "#8b8778" }}>
         Cast an Aura, then tap its mana value. Light-Paws fetches any Aura of that value <b>or less</b> whose name you don't already control — ranked best-first for your board (Light-Paws is {curPower}/{curTough}).
       </p>
@@ -1631,8 +1733,24 @@ function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, c
         {q && <button onClick={() => setQ("")}><X size={15} style={{ color: "#8b8778" }} /></button>}
       </div>
 
+      {availableKw.length > 0 && (
+        <NoSwipe className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+          <Filter size={13} style={{ color: "#8b8778", flexShrink: 0 }} />
+          {availableKw.map((k) => {
+            const on = kwFilters.has(k);
+            return (
+              <button key={k} onClick={() => toggleKw(k)} className="text-[11px] font-semibold rounded-full px-2.5 py-1 whitespace-nowrap flex-shrink-0"
+                style={{ background: on ? "#e8b84b" : "rgba(255,255,255,0.06)", color: on ? "#221a09" : "#a8a293", border: on ? "none" : "1px solid rgba(255,255,255,0.1)" }}>
+                {KW[k].label}
+              </button>
+            );
+          })}
+          {kwFilters.size > 0 && <button onClick={() => setKwFilters(new Set())} className="text-[11px] px-2 py-1 rounded-full flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: "#8b8778" }}>clear</button>}
+        </NoSwipe>
+      )}
+
       <div className="text-xs mb-2" style={{ color: "#8b8778" }}>
-        {buffs.length} fetchable to equip · cost ≤ {mv >= 5 ? "any" : mv} · tap then confirm · hold for card
+        {buffs.length} fetchable to equip · cost ≤ {mv >= 5 ? "any" : mv} · tap Add · hold for card
       </div>
       <div className="grid gap-1.5 mb-4">
         {buffs.map(({ a, ev }, i) => (
