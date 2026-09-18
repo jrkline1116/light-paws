@@ -269,6 +269,8 @@ export default function LightPawsConsole() {
   const [equipped, setEquipped] = useState(() => new Set(LS.get("equipped", [])));
   const [manualKw, setManualKw] = useState(() => new Set(LS.get("manual", [])));
   const [lethalNeed, setLethalNeed] = useState(() => LS.get("lethalNeed", 21));
+  const [costRed, setCostRed] = useState(() => LS.get("costRed", 0));      // flat "Auras cost {1} less" sources
+  const [affinity, setAffinity] = useState(() => LS.get("affinity", 0));   // Pearl-Ear: {1} less per Aura you control
   const [white, setWhite] = useState(() => LS.get("white", 2));
   const [other, setOther] = useState(() => LS.get("other", 0));
   const [baseP, setBaseP] = useState(() => LS.get("baseP", 2));
@@ -293,6 +295,8 @@ export default function LightPawsConsole() {
   useEffect(() => { LS.set("equipped", [...equipped]); }, [equipped]);
   useEffect(() => { LS.set("manual", [...manualKw]); }, [manualKw]);
   useEffect(() => { LS.set("lethalNeed", lethalNeed); }, [lethalNeed]);
+  useEffect(() => { LS.set("costRed", costRed); }, [costRed]);
+  useEffect(() => { LS.set("affinity", affinity); }, [affinity]);
   useEffect(() => { LS.set("white", white); }, [white]);
   useEffect(() => { LS.set("other", other); }, [other]);
   useEffect(() => { LS.set("baseP", baseP); }, [baseP]);
@@ -492,20 +496,25 @@ export default function LightPawsConsole() {
     if (lethalScore) gainedKw.push(`LETHAL (${swing})`);
 
     return { score: kwScore + statScore + effScore + lethalScore, gainedKw, addP, addT, draws, swing, lethal: lethalScore > 0,
-      manaW: set.reduce((s, a) => s + a.cost.w, 0), manaTotal: set.reduce((s, a) => s + a.cmc, 0) };
+      manaW: set.reduce((s, a) => s + a.cost.w, 0), manaTotal: set.reduce((s, a) => s + effTotal(a), 0) };
   }
 
+  // Cost reduction (Pearl-Ear affinity + flat reducers). Reduces GENERIC mana only —
+  // colored pips are never reduced, and printed mana value is unchanged (Fetch still uses a.cmc).
+  const costReduction = costRed + affinity * equippedIds.length;
+  const effGeneric = (a) => Math.max(0, a.cost.c - costReduction);
+  const effTotal = (a) => effGeneric(a) + a.cost.w;
   const auraInfo = useMemo(() => {
     const m = {};
     handAuras.forEach((a) => {
       const onBoard = equipped.has(a.id);
-      const affordable = white >= a.cost.w && (white + other) >= a.cmc;
+      const affordable = white >= a.cost.w && (white + other) >= effTotal(a);
       let marginal = 0, redundant = false;
       if (a.buff && !onBoard) { marginal = valueOfAdding([a.id]).score; redundant = marginal < 0.5; }
       m[a.id] = { onBoard, affordable, marginal, redundant };
     });
     return m;
-  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed]);
+  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed, costRed, affinity]);
 
   // value of the auras a combo would let you TUTOR (each cast triggers Light-Paws' search).
   // A cast aura of mana value m can fetch a deck aura of cost ≤ m, different name, not already
@@ -545,13 +554,13 @@ export default function LightPawsConsole() {
       const ev = evalCombo(chosen);
       if (ev.totalScore > bestScore + 1e-9) { bestScore = ev.totalScore; bestSet = [...chosen]; bestEval = ev; }
       for (let j = i; j < cands.length; j++) {
-        const a = cands[j].a, nw = wU + a.cost.w, nt = tU + a.cmc;
+        const a = cands[j].a, nw = wU + a.cost.w, nt = tU + effTotal(a);
         if (nw <= white && nt <= total) dfs(j + 1, [...chosen, a.id], nw, nt);
       }
     })(0, [], 0, 0);
-    const single = cands.filter(({ a }) => white >= a.cost.w && total >= a.cmc)[0];
+    const single = cands.filter(({ a }) => white >= a.cost.w && total >= effTotal(a))[0];
     return { ids: bestSet, eval: bestEval, single: single ? single.a : null };
-  }, [handAuras, equipped, hand, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed, deckAuras]);
+  }, [handAuras, equipped, hand, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed, costRed, affinity, deckAuras]);
 
   // ---- actions ----
   const removeFromHand = (id) => setHand((s) => { if (!s.has(id)) return s; const n = new Set(s); n.delete(id); return n; });
@@ -620,7 +629,7 @@ export default function LightPawsConsole() {
           <BoardTab {...{ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, lethalNeed, setLethalNeed, curDS }} />
         )}
         {tab === 1 && (
-          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds }} />
+          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction }} />
         )}
         {tab === 2 && (
           <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast, ctx, equippedIds, curDS, resetTurn }} />
@@ -892,7 +901,7 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
 
 /* ====================== TAB 2 · CAST (play from hand) ====================== */
 function PlayTab(p) {
-  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds } = p;
+  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction } = p;
   const [q, setQ] = useState("");
   const [showHelp, setShowHelp] = useState(false);
   const searchRef = useRef(null);
@@ -926,6 +935,29 @@ function PlayTab(p) {
             <div className="text-2xl font-bold" style={{ color: "#f0ead9" }}>{total}</div>
           </div>
         </div>
+      </Card>
+
+      {/* aura cost reduction */}
+      <Card>
+        <Lbl>Aura cost reduction</Lbl>
+        <div className="flex items-start justify-around gap-2">
+          <div className="flex flex-col items-center gap-1">
+            <MiniStep value={costRed} set={setCostRed} />
+            <span className="text-[10px] uppercase tracking-wide text-center" style={{ color: "#8b8778" }}>Flat ({"{1}"} less)</span>
+          </div>
+          <div className="flex flex-col items-center gap-1">
+            <MiniStep value={affinity} set={setAffinity} />
+            <span className="text-[10px] uppercase tracking-wide text-center" style={{ color: "#8b8778" }}>Affinity (Pearl-Ear)</span>
+          </div>
+          <div className="flex flex-col items-center justify-center rounded-lg px-3 py-1" style={{ background: costReduction > 0 ? "rgba(147,199,230,0.15)" : "rgba(255,255,255,0.05)" }}>
+            <div className="text-[10px] uppercase" style={{ color: "#8b8778" }}>Auras cost</div>
+            <div className="text-xl font-bold" style={{ color: costReduction > 0 ? "#93c7e6" : "#f0ead9" }}>−{costReduction}</div>
+          </div>
+        </div>
+        <p className="text-[10px] mt-1.5" style={{ color: "#6f6a5d" }}>
+          Flat = Hero of Iroas / Transcendent Envoy / Kor Spiritdancer. Affinity = Pearl-Ear ({"{1}"} less per Aura you control — currently {equippedIds.length}).
+          Reduces generic mana only; colored pips and printed mana value (used by Fetch) are unchanged.
+        </p>
       </Card>
 
       {/* creature snapshot */}
