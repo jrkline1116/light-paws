@@ -163,6 +163,30 @@ function parseFixedStat(oracle) {
   return m ? { p: parseInt(m[1], 10), t: parseInt(m[2], 10) } : null;
 }
 
+
+// Parse a non-Aura permanent for effects that matter to a Light-Paws aura deck:
+// aura cost reduction (flat or affinity) and card draw when you cast an Aura.
+function deriveSupport(c) {
+  const o = c.oracle_text || "";
+  const lo = o.toLowerCase();
+  const type = (c.type_line || "").toLowerCase();
+  let flat = 0, affinity = 0, drawPerAura = 0;
+  // "Aura spells you cast cost {1} less to cast"
+  const m = lo.match(/(?:aura|enchantment) spells you cast cost \{(\d+)\} less/);
+  if (m) flat = parseInt(m[1], 10);
+  // "have affinity for Auras" → {1} less per Aura you control
+  if (/affinity for auras/.test(lo)) affinity = 1;
+  // draw when you cast an aura / enchantment
+  if (/whenever you cast an? (aura|enchantment)[^.]*spell[^.]*draw a card/.test(lo)) drawPerAura = 1;
+  const cost = parseCost(c.mana_cost);
+  return {
+    id: "sup_" + norm(c.name), name: c.name, cost, cmc: cost.c + cost.w,
+    typeLine: c.type_line || "", flat, affinity, drawPerAura,
+    relevant: flat > 0 || affinity > 0 || drawPerAura > 0,
+    isLand: /land/.test(type),
+  };
+}
+
 // Turn a Scryfall card object into a usable aura for the deck, or explain why not.
 function deriveAura(c) {
   if (!c || !c.type_line || !/aura/i.test(c.type_line)) return { ok: false, name: c && c.name, reason: "not an Aura" };
@@ -295,6 +319,8 @@ export default function LightPawsConsole() {
   useEffect(() => { LS.set("equipped", [...equipped]); }, [equipped]);
   useEffect(() => { LS.set("manual", [...manualKw]); }, [manualKw]);
   useEffect(() => { LS.set("lethalNeed", lethalNeed); }, [lethalNeed]);
+  useEffect(() => { LS.set("supportPool", supportPool); }, [supportPool]);
+  useEffect(() => { LS.set("onBoard", [...onBoard]); }, [onBoard]);
   useEffect(() => { LS.set("costRed", costRed); }, [costRed]);
   useEffect(() => { LS.set("affinity", affinity); }, [affinity]);
   useEffect(() => { LS.set("white", white); }, [white]);
@@ -311,6 +337,8 @@ export default function LightPawsConsole() {
 
   const [enriched, setEnriched] = useState(() => LS.get("enriched", null));
   const [imported, setImported] = useState(() => LS.get("imported", []));
+  const [supportPool, setSupportPool] = useState(() => LS.get("supportPool", []));  // non-Aura cards from your decklist
+  const [onBoard, setOnBoard] = useState(() => new Set(LS.get("onBoard", [])));      // support cards currently in play
   const [importing, setImporting] = useState(false);
 
   // Background: pull authoritative cost/stat for the whole library from Scryfall.
@@ -370,7 +398,7 @@ export default function LightPawsConsole() {
       const toAdd = new Set(); const unknown = [];
       uniq.forEach((n) => { const id = nameToId[norm(n)]; if (id) toAdd.add(id); else unknown.push(n); });
 
-      const derived = []; const rejected = [];
+      const derived = []; const rejected = []; const supportFound = [];
       for (let i = 0; i < unknown.length; i += 75) {
         const chunk = unknown.slice(i, i + 75);
         try {
@@ -380,7 +408,12 @@ export default function LightPawsConsole() {
           });
           if (!r.ok) { rejected.push(...chunk); continue; }
           const d = await r.json();
-          (d.data || []).forEach((c) => { const res = deriveAura(c); if (res.ok) derived.push(res.aura); else rejected.push(res.name + " (" + res.reason + ")"); });
+          (d.data || []).forEach((c) => {
+            const res = deriveAura(c);
+            if (res.ok) { derived.push(res.aura); return; }
+            const sup = deriveSupport(c);            // not an Aura → keep it for the Board tab
+            if (!sup.isLand) supportFound.push(sup);
+          });
           (d.not_found || []).forEach((nf) => rejected.push((nf.name || "unknown") + " (not found)"));
         } catch { rejected.push(...chunk); }
       }
@@ -391,9 +424,16 @@ export default function LightPawsConsole() {
           LS.set("imported", merged); return merged;
         });
       }
+      if (supportFound.length) {
+        setSupportPool((prev) => {
+          const have = new Set(prev.map((x) => x.id));
+          const merged = [...prev, ...supportFound.filter((x) => !have.has(x.id))];
+          LS.set("supportPool", merged); return merged;
+        });
+      }
       const allIds = new Set(toAdd); derived.forEach((a) => allIds.add(a.id));
       setDeck((prev) => new Set([...prev, ...allIds]));
-      return { matched: toAdd.size, enriched: derived.length, rejected };
+      return { matched: toAdd.size, enriched: derived.length, support: supportFound.length, rejected };
     } finally { setImporting(false); }
   }
 
@@ -484,6 +524,7 @@ export default function LightPawsConsole() {
       if (a.token === "cond") effScore += W.TOKEN_COND;
       if (a.etbRemoval) effScore += W.ETB_REMOVAL;
     });
+    draws += set.length * drawPerAuraCast;   // Pearl-Ear / Sram etc: draw on each Aura cast
     effScore += draws * W.DRAW_VAL;
 
     // LETHAL: if this play's swing reaches the threshold, it wins — that dominates everything.
@@ -501,7 +542,11 @@ export default function LightPawsConsole() {
 
   // Cost reduction (Pearl-Ear affinity + flat reducers). Reduces GENERIC mana only —
   // colored pips are never reduced, and printed mana value is unchanged (Fetch still uses a.cmc).
-  const costReduction = costRed + affinity * equippedIds.length;
+  const boardCards = useMemo(() => supportPool.filter((x) => onBoard.has(x.id)), [supportPool, onBoard]);
+  const boardFlat = boardCards.reduce((n, x) => n + (x.flat || 0), 0);
+  const boardAffinity = boardCards.reduce((n, x) => n + (x.affinity || 0), 0);
+  const drawPerAuraCast = boardCards.reduce((n, x) => n + (x.drawPerAura || 0), 0);
+  const costReduction = costRed + boardFlat + (affinity + boardAffinity) * equippedIds.length;
   const effGeneric = (a) => Math.max(0, a.cost.c - costReduction);
   const effTotal = (a) => effGeneric(a) + a.cost.w;
   const auraInfo = useMemo(() => {
@@ -514,7 +559,7 @@ export default function LightPawsConsole() {
       m[a.id] = { onBoard, affordable, marginal, redundant };
     });
     return m;
-  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed, costRed, affinity]);
+  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed, costRed, affinity, onBoard, supportPool]);
 
   // value of the auras a combo would let you TUTOR (each cast triggers Light-Paws' search).
   // A cast aura of mana value m can fetch a deck aura of cost ≤ m, different name, not already
@@ -560,7 +605,7 @@ export default function LightPawsConsole() {
     })(0, [], 0, 0);
     const single = cands.filter(({ a }) => white >= a.cost.w && total >= effTotal(a))[0];
     return { ids: bestSet, eval: bestEval, single: single ? single.a : null };
-  }, [handAuras, equipped, hand, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed, costRed, affinity, deckAuras]);
+  }, [handAuras, equipped, hand, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed, costRed, affinity, onBoard, supportPool, deckAuras]);
 
   // ---- actions ----
   const removeFromHand = (id) => setHand((s) => { if (!s.has(id)) return s; const n = new Set(s); n.delete(id); return n; });
@@ -600,7 +645,7 @@ export default function LightPawsConsole() {
   };
   const backToCast = () => { setTab(1); setCastLoop((prev) => (prev && prev.remaining.length === 0 ? null : prev)); };
   const toggleManual = (k) => setManualKw((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
-  const resetTurn = () => { setEquipped(new Set()); setManualKw(new Set()); setProtChoice({}); setHand(new Set()); setArtifacts(0); setOtherEnch(0); setPlains(0); setWhite(2); setOther(0); };
+  const resetTurn = () => { setEquipped(new Set()); setManualKw(new Set()); setProtChoice({}); setHand(new Set()); setArtifacts(0); setOtherEnch(0); setPlains(0); setWhite(2); setOther(0); setLethalNeed(21); setOnBoard(new Set()); };
 
   // ---- swipe between tabs ----
   const touch = useRef({ x: 0, y: 0 });
@@ -609,7 +654,7 @@ export default function LightPawsConsole() {
     const dx = e.changedTouches[0].clientX - touch.current.x;
     const dy = e.changedTouches[0].clientY - touch.current.y;
     if (Math.abs(dx) > 65 && Math.abs(dx) > Math.abs(dy) * 1.6) {
-      setTab((t) => Math.min(4, Math.max(0, t + (dx < 0 ? 1 : -1))));
+      setTab((t) => Math.min(5, Math.max(0, t + (dx < 0 ? 1 : -1))));
     }
   };
 
@@ -617,6 +662,7 @@ export default function LightPawsConsole() {
     { icon: Star, label: "Active" },
     { icon: Sparkles, label: "Cast" },
     { icon: Wand2, label: "Fetch" },
+    { icon: Gem, label: "Board" },
     { icon: Layers, label: "Deck" },
     { icon: Database, label: "Browse" },
   ];
@@ -635,9 +681,13 @@ export default function LightPawsConsole() {
           <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast, ctx, equippedIds, curDS, resetTurn }} />
         )}
         {tab === 3 && (
-          <DeckTab {...{ deck, setDeck, equipped, setEquipped, openInfo, synced: !!enriched, lib: LIB, onImport: importList, importing }} />
+          <BoardStateTab {...{ supportPool, onBoard, setOnBoard, boardCards, costReduction, drawPerAuraCast, equippedIds,
+            white, setWhite, other, setOther, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, resetTurn }} />
         )}
         {tab === 4 && (
+          <DeckTab {...{ deck, setDeck, equipped, setEquipped, openInfo, synced: !!enriched, lib: LIB, onImport: importList, importing }} />
+        )}
+        {tab === 5 && (
           <AllAurasTab onPick={setPickCard} chosenPrints={chosenPrints} deckNames={deckNames} />
         )}
 
@@ -646,7 +696,7 @@ export default function LightPawsConsole() {
 
       {/* bottom tab bar */}
       <div className="fixed bottom-0 inset-x-0 z-20 border-t border-amber-900/40 backdrop-blur safe-bottom" style={{ background: "rgba(15,17,24,0.9)" }}>
-        <div className="max-w-lg mx-auto grid grid-cols-5">
+        <div className="max-w-lg mx-auto grid grid-cols-6">
           {TABS.map((t, i) => {
             const Ico = t.icon; const active = tab === i;
             return (
@@ -799,22 +849,6 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
           <ProtectionTracker protAuras={ctx.on.filter((a) => a.prot)} protChoice={protChoice} setProt={setProt} />
         </div>
 
-        {/* other permanents you control — one row, labels under each */}
-        <div className="flex items-start justify-center gap-6 mt-1">
-          <div className="flex flex-col items-center gap-1">
-            <MiniStep value={artifacts} set={setArtifacts} />
-            <span className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Artifacts</span>
-          </div>
-          <div className="flex flex-col items-center gap-1">
-            <MiniStep value={otherEnch} set={setOtherEnch} />
-            <span className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Enchants</span>
-          </div>
-          <div className="flex flex-col items-center gap-1">
-            <MiniStep value={plains} set={setPlains} />
-            <span className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Plains</span>
-          </div>
-        </div>
-        <div className="text-[10px] mt-1.5 px-4 text-center" style={{ color: "#6f6a5d" }}>other permanents you control (attached auras counted automatically) — feeds All That Glitters, Ethereal Armor &amp; Armored Ascension</div>
         {heroArtist && <div className="text-center text-[10px] mt-2" style={{ color: "#5f5a4e" }}>Art by {heroArtist} · © Wizards of the Coast</div>}
       </div>
 
@@ -836,16 +870,6 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
               {(deckAuras.find((a) => a.id === id) || {}).name || byName(id)} <X size={13} />
             </button>
           ))}
-        </div>
-
-        {/* mana (below the equipped list) */}
-        <div className="flex items-center justify-center gap-4 mb-3 rounded-xl py-2" style={{ background: "rgba(255,255,255,0.03)" }}>
-          <ManaChip label="White" value={white} set={setWhite} gold />
-          <ManaChip label="Other" value={other} set={setOther} />
-          <div className="text-center px-1">
-            <div className="text-[10px] uppercase" style={{ color: "#8b8778" }}>Total</div>
-            <div className="text-lg font-bold leading-none" style={{ color: "#f0ead9" }}>{total}</div>
-          </div>
         </div>
 
         {/* search */}
@@ -935,29 +959,6 @@ function PlayTab(p) {
             <div className="text-2xl font-bold" style={{ color: "#f0ead9" }}>{total}</div>
           </div>
         </div>
-      </Card>
-
-      {/* aura cost reduction */}
-      <Card>
-        <Lbl>Aura cost reduction</Lbl>
-        <div className="flex items-start justify-around gap-2">
-          <div className="flex flex-col items-center gap-1">
-            <MiniStep value={costRed} set={setCostRed} />
-            <span className="text-[10px] uppercase tracking-wide text-center" style={{ color: "#8b8778" }}>Flat ({"{1}"} less)</span>
-          </div>
-          <div className="flex flex-col items-center gap-1">
-            <MiniStep value={affinity} set={setAffinity} />
-            <span className="text-[10px] uppercase tracking-wide text-center" style={{ color: "#8b8778" }}>Affinity (Pearl-Ear)</span>
-          </div>
-          <div className="flex flex-col items-center justify-center rounded-lg px-3 py-1" style={{ background: costReduction > 0 ? "rgba(147,199,230,0.15)" : "rgba(255,255,255,0.05)" }}>
-            <div className="text-[10px] uppercase" style={{ color: "#8b8778" }}>Auras cost</div>
-            <div className="text-xl font-bold" style={{ color: costReduction > 0 ? "#93c7e6" : "#f0ead9" }}>−{costReduction}</div>
-          </div>
-        </div>
-        <p className="text-[10px] mt-1.5" style={{ color: "#6f6a5d" }}>
-          Flat = Hero of Iroas / Transcendent Envoy / Kor Spiritdancer. Affinity = Pearl-Ear ({"{1}"} less per Aura you control — currently {equippedIds.length}).
-          Reduces generic mana only; colored pips and printed mana value (used by Fetch) are unchanged.
-        </p>
       </Card>
 
       {/* creature snapshot */}
@@ -1247,7 +1248,7 @@ function DeckTab({ deck, setDeck, equipped, setEquipped, openInfo, synced, lib, 
         {report && (
           <div className="text-[11px] mt-2 leading-snug" style={{ color: "#b7b1a2" }}>
             <span style={{ color: "#8fd39a" }}>Added {report.matched + report.enriched}</span>
-            {report.enriched > 0 && <span> ({report.enriched} newly fetched from Scryfall)</span>}.
+            {report.enriched > 0 && <span> ({report.enriched} newly fetched from Scryfall)</span>}{report.support > 0 && <span> · {report.support} non-Aura cards saved to the Board tab</span>}.
             {report.rejected.length > 0 && <span> Couldn't use {report.rejected.length}: {report.rejected.slice(0, 6).join(", ")}{report.rejected.length > 6 ? `, +${report.rejected.length - 6} more` : ""}.</span>}
           </div>
         )}
@@ -1650,24 +1651,30 @@ function summaryLine(ev) {
 // collapsible "what's on Light-Paws right now" summary for the Cast/Fetch tabs
 function BoardPeek({ curPower, curTough, curDS, ctx, equippedIds, deckAuras, byName }) {
   const [open, setOpen] = useState(false);
+  const kws = KW_ORDER.filter((k) => hasKw(ctx.have, k));
+  const shown = open ? kws : kws.slice(0, 5);
+  const extra = kws.length - shown.length;
   return (
     <div className="mb-2">
-      <button onClick={() => setOpen((v) => !v)} className="w-full flex items-center justify-between rounded-lg px-3 py-1.5"
+      <button onClick={() => setOpen((v) => !v)} className="w-full rounded-lg px-3 py-2"
         style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
-        <span className="text-[11px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Light-Paws now</span>
-        <span className="flex items-center gap-2">
-          <span className="text-sm font-bold" style={{ color: "#f0ead9" }}>{curPower}/{curTough}{curDS && <span style={{ color: "#e8b84b" }}> ×2={curPower * 2}</span>}</span>
-          <span className="text-[11px]" style={{ color: "#c79a3e" }}>{equippedIds.length} auras {open ? "▲" : "▼"}</span>
-        </span>
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-sm font-bold whitespace-nowrap" style={{ color: "#f0ead9" }}>
+            {curPower}/{curTough}{curDS && <span style={{ color: "#e8b84b" }}> ×2={curPower * 2}</span>}
+          </span>
+          <span className="flex items-center gap-1 overflow-hidden flex-wrap justify-end">
+            {shown.map((k) => (
+              <span key={k} className="text-[10px] px-1.5 py-0.5 rounded whitespace-nowrap" style={{ background: "rgba(232,184,75,0.18)", color: "#e8b84b" }}>{KW[k].label}</span>
+            ))}
+            {kws.length === 0 && <span className="text-[11px] italic" style={{ color: "#6f6a5d" }}>no keywords</span>}
+            {extra > 0 && <span className="text-[10px]" style={{ color: "#8b8778" }}>+{extra} more</span>}
+            <span className="text-[11px] ml-1" style={{ color: "#c79a3e" }}>{equippedIds.length} ▾</span>
+          </span>
+        </div>
       </button>
       {open && (
         <div className="rounded-lg px-3 py-2 mt-1" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.07)" }}>
-          <div className="flex flex-wrap gap-1 mb-1.5">
-            {KW_ORDER.filter((k) => hasKw(ctx.have, k)).map((k) => (
-              <span key={k} className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: "rgba(232,184,75,0.18)", color: "#e8b84b" }}>{KW[k].label}</span>
-            ))}
-            {KW_ORDER.filter((k) => hasKw(ctx.have, k)).length === 0 && <span className="text-[11px] italic" style={{ color: "#6f6a5d" }}>No keywords yet</span>}
-          </div>
+          <div className="text-[10px] uppercase tracking-wide mb-1" style={{ color: "#8b8778" }}>Attached auras</div>
           <div className="flex flex-wrap gap-1">
             {equippedIds.map((id) => (
               <span key={id} className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: "rgba(255,255,255,0.07)", color: "#cfc9ba" }}>
@@ -1704,6 +1711,121 @@ function FetchRow({ a, ev, first, onEquip, onInfo }) {
           <button onClick={(e) => { stop(e); onEquip(); }} onPointerDown={stop} onPointerUp={stop}
             className="text-xs font-bold rounded-lg px-3 py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Add</button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ====================== TAB · BOARD (non-aura permanents you control) ====================== */
+function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduction, drawPerAuraCast, equippedIds,
+  white, setWhite, other, setOther, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, resetTurn }) {
+  const [q, setQ] = useState("");
+  const searchRef = useRef(null);
+  const total = white + other;
+  const toggle = (id) => setOnBoard((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const matches = supportPool
+    .filter((x) => !onBoard.has(x.id) && (!q || norm(x.name).includes(norm(q)) || norm(x.typeLine || "").includes(norm(q))))
+    .sort((a, b) => (b.relevant - a.relevant) || a.cmc - b.cmc || a.name.localeCompare(b.name));
+
+  return (
+    <div className="px-3 pt-4">
+      <div className="flex items-start justify-between gap-2">
+        <div>
+          <div className="text-[10px] tracking-[0.3em] uppercase" style={{ color: "#c79a3e" }}>Board · everything else you control</div>
+          <p className="text-xs mb-2" style={{ color: "#8b8778" }}>Your mana, other permanents, and the non-Aura cards in play that change how your Auras cast.</p>
+        </div>
+        <button onClick={resetTurn} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>
+          <RotateCcw size={13} /> Reset
+        </button>
+      </div>
+
+      {/* mana */}
+      <Card>
+        <Lbl>Mana available</Lbl>
+        <div className="flex gap-2">
+          <Step label="White" value={white} set={setWhite} gold />
+          <Step label="Other" value={other} set={setOther} />
+          <div className="flex-1 flex flex-col items-center justify-center rounded-lg" style={{ background: "rgba(255,255,255,0.05)" }}>
+            <div className="text-[10px] uppercase" style={{ color: "#8b8778" }}>Total</div>
+            <div className="text-2xl font-bold" style={{ color: "#f0ead9" }}>{total}</div>
+          </div>
+        </div>
+      </Card>
+
+      {/* permanent counts */}
+      <Card>
+        <Lbl>Other permanents you control</Lbl>
+        <div className="flex items-start justify-around gap-2">
+          {[["Artifacts", artifacts, setArtifacts], ["Enchants", otherEnch, setOtherEnch], ["Plains", plains, setPlains]].map(([lbl, v, setV]) => (
+            <div key={lbl} className="flex flex-col items-center gap-1">
+              <MiniStep value={v} set={setV} />
+              <span className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>{lbl}</span>
+            </div>
+          ))}
+        </div>
+        <p className="text-[10px] mt-1.5" style={{ color: "#6f6a5d" }}>Attached Auras are counted automatically — feeds All That Glitters, Ethereal Armor &amp; Armored Ascension.</p>
+      </Card>
+
+      {/* effect summary */}
+      {(costReduction > 0 || drawPerAuraCast > 0) && (
+        <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(147,199,230,0.12)", border: "1px solid rgba(147,199,230,0.45)" }}>
+          <div className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: "#93c7e6" }}>Active effects on your Auras</div>
+          <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm" style={{ color: "#dfeaf3" }}>
+            {costReduction > 0 && <span>Auras cost <b>−{costReduction}</b> generic</span>}
+            {drawPerAuraCast > 0 && <span>Draw <b>{drawPerAuraCast}</b> per Aura cast</span>}
+          </div>
+        </div>
+      )}
+
+      {/* in play */}
+      <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: "#c79a3e" }}>In play ({boardCards.length})</div>
+      <div className="grid gap-1.5 mb-3">
+        {boardCards.map((x) => (
+          <div key={x.id} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ background: "rgba(232,184,75,0.12)", border: "1px solid #e8b84b" }}>
+            <div className="min-w-0">
+              <div className="font-bold text-[14px]" style={{ color: "#f0ead9" }}>{x.name}</div>
+              <div className="text-[11px]" style={{ color: "#93c7e6" }}>
+                {[x.flat ? `Auras cost {${x.flat}} less` : null,
+                  x.affinity ? `Affinity for Auras (−${x.affinity * equippedIds.length} now)` : null,
+                  x.drawPerAura ? "Draw on Aura cast" : null].filter(Boolean).join(" · ") || <span style={{ color: "#8b8778" }}>{x.typeLine}</span>}
+              </div>
+            </div>
+            <button onClick={() => toggle(x.id)} className="rounded-lg px-2 py-1.5 flex-shrink-0" style={{ background: "rgba(255,255,255,0.1)" }}><X size={15} style={{ color: "#cfc9ba" }} /></button>
+          </div>
+        ))}
+        {boardCards.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>Nothing added yet.</div>}
+      </div>
+
+      {/* add from deck */}
+      <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(232,184,75,0.09)", border: "1.5px solid rgba(232,184,75,0.55)" }}>
+        <div className="flex items-center gap-1.5 mb-2">
+          <Plus size={14} style={{ color: "#e8b84b" }} />
+          <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>Add a permanent you control</span>
+        </div>
+        <div className="flex items-center gap-2 rounded-lg px-3 py-2.5" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(232,184,75,0.45)" }}>
+          <Search size={18} style={{ color: "#e8b84b" }} />
+          <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your deck's creatures, enchantments…" className="bg-transparent outline-none text-base w-full" style={{ color: "#ece7db" }} />
+          {q && <button onClick={() => setQ("")}><X size={16} style={{ color: "#8b8778" }} /></button>}
+        </div>
+        {supportPool.length === 0 ? (
+          <p className="text-[11px] mt-2" style={{ color: "#c98a8a" }}>No non-Aura cards stored yet — re-import your decklist on the Deck tab to pull them in.</p>
+        ) : q ? (
+          <div className="grid gap-1.5 mt-2">
+            {matches.slice(0, 40).map((x) => (
+              <button key={x.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { toggle(x.id); setQ(""); if (searchRef.current) searchRef.current.focus(); }}
+                className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                <span className="min-w-0">
+                  <span className="font-semibold text-[14px] block" style={{ color: "#e6dfce" }}>{x.name}</span>
+                  {x.relevant && <span className="text-[10px]" style={{ color: "#93c7e6" }}>affects your Auras</span>}
+                </span>
+                <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(232,184,75,0.2)" }}><Plus size={16} style={{ color: "#e8b84b" }} /></span>
+              </button>
+            ))}
+            {matches.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>No match in your deck.</div>}
+          </div>
+        ) : (
+          <div className="text-[11px] mt-1.5" style={{ color: "#8b8778" }}>{supportPool.length} non-Aura cards from your deck. Cards that reduce Aura costs or draw on Aura casts feed the Cast tab automatically.</div>
+        )}
       </div>
     </div>
   );
