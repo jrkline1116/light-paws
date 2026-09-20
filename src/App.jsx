@@ -319,8 +319,6 @@ export default function LightPawsConsole() {
   useEffect(() => { LS.set("equipped", [...equipped]); }, [equipped]);
   useEffect(() => { LS.set("manual", [...manualKw]); }, [manualKw]);
   useEffect(() => { LS.set("lethalNeed", lethalNeed); }, [lethalNeed]);
-  useEffect(() => { LS.set("supportPool", supportPool); }, [supportPool]);
-  useEffect(() => { LS.set("onBoard", [...onBoard]); }, [onBoard]);
   useEffect(() => { LS.set("costRed", costRed); }, [costRed]);
   useEffect(() => { LS.set("affinity", affinity); }, [affinity]);
   useEffect(() => { LS.set("white", white); }, [white]);
@@ -339,6 +337,8 @@ export default function LightPawsConsole() {
   const [imported, setImported] = useState(() => LS.get("imported", []));
   const [supportPool, setSupportPool] = useState(() => LS.get("supportPool", []));  // non-Aura cards from your decklist
   const [onBoard, setOnBoard] = useState(() => new Set(LS.get("onBoard", [])));      // support cards currently in play
+  useEffect(() => { LS.set("supportPool", supportPool); }, [supportPool]);
+  useEffect(() => { LS.set("onBoard", [...onBoard]); }, [onBoard]);
   const [importing, setImporting] = useState(false);
 
   // Background: pull authoritative cost/stat for the whole library from Scryfall.
