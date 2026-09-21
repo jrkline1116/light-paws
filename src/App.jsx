@@ -289,7 +289,8 @@ export default function LightPawsConsole() {
   const [pendingFetch, setPendingFetch] = useState(null); // {count, mv} → shows the "go to Fetch?" popup
   const [castLoop, setCastLoop] = useState(null);
   const [protPrompt, setProtPrompt] = useState(null); // aura needing a protection color // {remaining:[ids]} while walking a multi-aura best play
-  const [deck, setDeck] = useState(() => new Set(LS.get("deck", DEFAULT_DECK)));
+  const [decks, setDecks] = useState(() => LS.get("decks", []));     // [{id,name,auras,support,all}]
+  const [activeId, setActiveId] = useState(() => LS.get("activeId", null));
   const [equipped, setEquipped] = useState(() => new Set(LS.get("equipped", [])));
   const [manualKw, setManualKw] = useState(() => new Set(LS.get("manual", [])));
   const [lethalNeed, setLethalNeed] = useState(() => LS.get("lethalNeed", 21));
@@ -315,7 +316,8 @@ export default function LightPawsConsole() {
   const choosePrint = (name, pr) => setChosenPrints((p) => ({ ...p, [name]: pr }));
 
   // save on change
-  useEffect(() => { LS.set("deck", [...deck]); }, [deck]);
+  useEffect(() => { LS.set("decks", decks); }, [decks]);
+  useEffect(() => { LS.set("activeId", activeId); }, [activeId]);
   useEffect(() => { LS.set("equipped", [...equipped]); }, [equipped]);
   useEffect(() => { LS.set("manual", [...manualKw]); }, [manualKw]);
   useEffect(() => { LS.set("lethalNeed", lethalNeed); }, [lethalNeed]);
@@ -334,10 +336,7 @@ export default function LightPawsConsole() {
   }, []);
 
   const [enriched, setEnriched] = useState(() => LS.get("enriched", null));
-  const [imported, setImported] = useState(() => LS.get("imported", []));
-  const [supportPool, setSupportPool] = useState(() => LS.get("supportPool", []));  // non-Aura cards from your decklist
   const [onBoard, setOnBoard] = useState(() => new Set(LS.get("onBoard", [])));      // support cards currently in play
-  useEffect(() => { LS.set("supportPool", supportPool); }, [supportPool]);
   useEffect(() => { LS.set("onBoard", [...onBoard]); }, [onBoard]);
   const [importing, setImporting] = useState(false);
 
@@ -379,65 +378,80 @@ export default function LightPawsConsole() {
     if (!a.scale && e.stat) out.stat = e.stat; // override fixed stats; keep scale auras
     return out;
   }), [enriched]);
-  const LIB = useMemo(() => [...baseLib, ...imported], [baseLib, imported]);
-  const nameToId = useMemo(() => Object.fromEntries(LIB.map((a) => [norm(a.name), a.id])), [LIB]);
+  const builtinByName = useMemo(() => Object.fromEntries(baseLib.map((a) => [norm(a.name), a])), [baseLib]);
 
-  // Import a decklist: match to library, and enrich anything unknown from Scryfall.
-  async function importList(text) {
+  // ---- saved decks ----
+  const activeDeck = useMemo(() => decks.find((d) => d.id === activeId) || null, [decks, activeId]);
+  const hasDeck = !!activeDeck;
+  // auras of the active deck, refreshed against the enriched built-in library where names match
+  const deckAuras = useMemo(() => {
+    if (!activeDeck) return [];
+    return (activeDeck.auras || []).map((a) => builtinByName[norm(a.name)] || a);
+  }, [activeDeck, builtinByName]);
+  const supportPool = useMemo(() => (activeDeck ? activeDeck.support || [] : []), [activeDeck]);
+
+  // Parse a pasted decklist into a full deck object: auras (playable), support (board), all (viewing).
+  async function buildDeckFromList(text) {
+    const names = [];
+    text.split("\n").forEach((raw) => {
+      let line = raw.trim();
+      if (!line) return;
+      if (/^(deck|commander|sideboard|maybeboard|about)\b/i.test(line)) return;
+      line = line.replace(/^\d+\s*x?\s+/i, "").replace(/\s*\([^)]*\)\s*[\w-]*\s*$/, "").replace(/\s+\*[^*]*\*\s*$/, "").replace(/\s+#.*$/, "").trim();
+      if (line) names.push(line);
+    });
+    const uniq = [...new Map(names.map((n) => [norm(n), n])).values()];
+    const auras = [], support = [], all = [], rejected = [];
+    for (let i = 0; i < uniq.length; i += 75) {
+      const chunk = uniq.slice(i, i + 75);
+      try {
+        const r = await fetch("https://api.scryfall.com/cards/collection", {
+          method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+          body: JSON.stringify({ identifiers: chunk.map((n) => ({ name: n })) }),
+        });
+        if (!r.ok) { rejected.push(...chunk); continue; }
+        const d = await r.json();
+        (d.data || []).forEach((c) => {
+          all.push({ name: c.name, typeLine: c.type_line || "", manaCost: c.mana_cost || "", cmc: c.cmc || 0 });
+          const builtin = builtinByName[norm(c.name)];
+          if (builtin) { auras.push(builtin); return; }           // keep hand-tuned scoring where we have it
+          const res = deriveAura(c);
+          if (res.ok) { auras.push(res.aura); return; }
+          const sup = deriveSupport(c);
+          if (!sup.isLand) support.push(sup);
+        });
+        (d.not_found || []).forEach((nf) => rejected.push((nf.name || "unknown") + " (not found)"));
+      } catch { rejected.push(...chunk); }
+    }
+    return { auras, support, all, rejected };
+  }
+
+  async function importList(text, name, replaceId) {
     setImporting(true);
     try {
-      const names = [];
-      text.split("\n").forEach((raw) => {
-        let line = raw.trim();
-        if (!line) return;
-        if (/^(deck|commander|sideboard|maybeboard|about)\b/i.test(line)) return;
-        line = line.replace(/^\d+\s*x?\s+/i, "").replace(/\s*\([^)]*\)\s*[\w-]*\s*$/, "").replace(/\s+\*[^*]*\*\s*$/, "").replace(/\s+#.*$/, "").trim();
-        if (line && norm(line) !== norm("Light-Paws, Emperor's Voice")) names.push(line);
+      const built = await buildDeckFromList(text);
+      const deckObj = {
+        id: replaceId || ("deck_" + Date.now()),
+        name: name || "Untitled deck",
+        auras: built.auras, support: built.support, all: built.all,
+      };
+      setDecks((prev) => {
+        const without = prev.filter((d) => d.id !== deckObj.id);
+        return [...without, deckObj];
       });
-      const uniq = [...new Map(names.map((n) => [norm(n), n])).values()];
-      const toAdd = new Set(); const unknown = [];
-      uniq.forEach((n) => { const id = nameToId[norm(n)]; if (id) toAdd.add(id); else unknown.push(n); });
-
-      const derived = []; const rejected = []; const supportFound = [];
-      for (let i = 0; i < unknown.length; i += 75) {
-        const chunk = unknown.slice(i, i + 75);
-        try {
-          const r = await fetch("https://api.scryfall.com/cards/collection", {
-            method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify({ identifiers: chunk.map((n) => ({ name: n })) }),
-          });
-          if (!r.ok) { rejected.push(...chunk); continue; }
-          const d = await r.json();
-          (d.data || []).forEach((c) => {
-            const res = deriveAura(c);
-            if (res.ok) { derived.push(res.aura); return; }
-            const sup = deriveSupport(c);            // not an Aura → keep it for the Board tab
-            if (!sup.isLand) supportFound.push(sup);
-          });
-          (d.not_found || []).forEach((nf) => rejected.push((nf.name || "unknown") + " (not found)"));
-        } catch { rejected.push(...chunk); }
-      }
-      if (derived.length) {
-        setImported((prev) => {
-          const have = new Set(prev.map((a) => a.id));
-          const merged = [...prev, ...derived.filter((a) => !have.has(a.id))];
-          LS.set("imported", merged); return merged;
-        });
-      }
-      if (supportFound.length) {
-        setSupportPool((prev) => {
-          const have = new Set(prev.map((x) => x.id));
-          const merged = [...prev, ...supportFound.filter((x) => !have.has(x.id))];
-          LS.set("supportPool", merged); return merged;
-        });
-      }
-      const allIds = new Set(toAdd); derived.forEach((a) => allIds.add(a.id));
-      setDeck((prev) => new Set([...prev, ...allIds]));
-      return { matched: toAdd.size, enriched: derived.length, support: supportFound.length, rejected };
+      setActiveId(deckObj.id);
+      setEquipped(new Set()); setHand(new Set()); setOnBoard(new Set());
+      return { auras: built.auras.length, support: built.support.length, total: built.all.length, rejected: built.rejected };
     } finally { setImporting(false); }
   }
 
-  const deckAuras = useMemo(() => LIB.filter((a) => deck.has(a.id)), [LIB, deck]);
+  const deleteDeck = (id) => {
+    setDecks((prev) => prev.filter((d) => d.id !== id));
+    if (activeId === id) { setActiveId(null); setEquipped(new Set()); setHand(new Set()); setOnBoard(new Set()); }
+  };
+  const renameDeck = (id, name) => setDecks((prev) => prev.map((d) => (d.id === id ? { ...d, name } : d)));
+  const selectDeck = (id) => { setActiveId(id); setEquipped(new Set()); setHand(new Set()); setOnBoard(new Set()); };
+
   const deckNames = useMemo(() => new Set(deckAuras.map((a) => a.name)), [deckAuras]);
   const [hand, setHand] = useState(() => new Set(LS.get("hand", [])));
   useEffect(() => { LS.set("hand", [...hand]); }, [hand]);
@@ -445,7 +459,9 @@ export default function LightPawsConsole() {
   useEffect(() => { LS.set("weights", weights); }, [weights]);
   const W = weights;
   const handAuras = useMemo(() => deckAuras.filter((a) => hand.has(a.id)), [deckAuras, hand]);
-  const equippedIds = useMemo(() => [...equipped].filter((id) => deck.has(id)), [equipped, deck]);
+  const handSupport = useMemo(() => supportPool.filter((x) => hand.has(x.id)), [supportPool, hand]);
+  const deckAuraIds = useMemo(() => new Set(deckAuras.map((a) => a.id)), [deckAuras]);
+  const equippedIds = useMemo(() => [...equipped].filter((id) => deckAuraIds.has(id)), [equipped, deckAuraIds]);
 
   // Light-Paws art from Scryfall (falls back to an emblem)
   useEffect(() => {
@@ -631,6 +647,10 @@ export default function LightPawsConsole() {
     setPendingFetch({ count: ids.length, mv: Math.min(mv, 5) });
   };
   const castFromHand = (id) => castMany([id]);
+  const castSupport = (id) => {
+    setOnBoard((s) => new Set(s).add(id));
+    setHand((s) => { const n = new Set(s); n.delete(id); return n; });
+  };
   // ---- Cast & Fetch loop (for multi-aura best plays): cast one → fetch → back → next ----
   const startCastLoop = (ids) => setCastLoop({ remaining: [...ids] });
   const exitCastLoop = () => setCastLoop(null);
@@ -664,31 +684,40 @@ export default function LightPawsConsole() {
     { icon: Wand2, label: "Fetch" },
     { icon: Gem, label: "Board" },
     { icon: Layers, label: "Deck" },
-    { icon: Database, label: "Browse" },
+    { icon: Database, label: "Cards" },
   ];
 
   return (
     <div className="min-h-screen w-full" style={{ ...SANS, background: "radial-gradient(1200px 600px at 50% -10%, #26314d 0%, #161a26 55%, #0f1118 100%)", color: "#ece7db" }}>
       <div className="max-w-lg mx-auto pb-24" onTouchStart={onTS} onTouchEnd={onTE}>
 
-        {tab === 0 && (
+        {!hasDeck && tab < 4 && (
+          <div className="px-3 pt-10">
+            <div className="rounded-xl p-5 text-center" style={{ background: "rgba(232,184,75,0.10)", border: "1.5px solid rgba(232,184,75,0.5)" }}>
+              <div className="text-base font-bold mb-1" style={{ color: "#e8b84b" }}>Import your Light-Paws Commander deck to start playing!</div>
+              <p className="text-sm mb-3" style={{ color: "#b7b1a2" }}>Paste your decklist on the Deck tab and this app will track your auras, best plays, and fetches.</p>
+              <button onClick={() => setTab(4)} className="text-sm font-bold rounded-lg px-4 py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Go to Deck tab</button>
+            </div>
+          </div>
+        )}
+        {hasDeck && tab === 0 && (
           <BoardTab {...{ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, lethalNeed, setLethalNeed, curDS }} />
         )}
-        {tab === 1 && (
-          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction }} />
+        {hasDeck && tab === 1 && (
+          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard }} />
         )}
-        {tab === 2 && (
-          <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast, ctx, equippedIds, curDS, resetTurn }} />
+        {hasDeck && tab === 2 && (
+          <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast, onAfterFetch: () => setTab(1), ctx, equippedIds, curDS, resetTurn }} />
         )}
-        {tab === 3 && (
+        {hasDeck && tab === 3 && (
           <BoardStateTab {...{ supportPool, onBoard, setOnBoard, boardCards, costReduction, drawPerAuraCast, equippedIds,
             white, setWhite, other, setOther, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, resetTurn }} />
         )}
         {tab === 4 && (
-          <DeckTab {...{ deck, setDeck, equipped, setEquipped, openInfo, synced: !!enriched, lib: LIB, onImport: importList, importing }} />
+          <DeckTab {...{ decks, activeId, onImport: importList, importing, selectDeck, deleteDeck, renameDeck, synced: !!enriched }} />
         )}
         {tab === 5 && (
-          <AllAurasTab onPick={setPickCard} chosenPrints={chosenPrints} deckNames={deckNames} />
+          <DeckViewTab {...{ decks, activeId, onPick: setPickCard, chosenPrints, openInfoCard: openInfo }} />
         )}
 
         <TabFooter />
@@ -925,7 +954,7 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
 
 /* ====================== TAB 2 · CAST (play from hand) ====================== */
 function PlayTab(p) {
-  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction } = p;
+  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard } = p;
   const [q, setQ] = useState("");
   const [showHelp, setShowHelp] = useState(false);
   const searchRef = useRef(null);
@@ -933,6 +962,9 @@ function PlayTab(p) {
 
   const addable = deckAuras
     .filter((a) => !hand.has(a.id) && !equipped.has(a.id) && auraMatchesText(a, q))
+    .sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name));
+  const addableSupport = (supportPool || [])
+    .filter((x) => !hand.has(x.id) && !onBoard.has(x.id) && (!q || norm(x.name).includes(norm(q)) || norm(x.typeLine || "").includes(norm(q))))
     .sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name));
 
   return (
@@ -973,7 +1005,6 @@ function PlayTab(p) {
         <div className="rounded-lg px-3 py-2 flex items-baseline justify-between" style={{ background: "rgba(0,0,0,0.3)" }}>
           <span className="text-[11px] uppercase" style={{ color: "#8b8778" }}>now</span>
           <span className="text-xl font-bold" style={{ color: "#f0ead9" }}>{curPower}/{curTough}</span>
-          <span className="text-xs" style={{ color: "#9a9484" }}>≈ <b style={{ color: "#e8b84b" }}>{projDmg}</b> dmg{curDS && " ×2"}</span>
         </div>
       </Card>
 
@@ -1002,14 +1033,29 @@ function PlayTab(p) {
                 <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(232,184,75,0.2)" }}><Plus size={16} style={{ color: "#e8b84b" }} /></span>
               </button>
             ))}
-            {addable.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>No match — check spelling.</div>}
+            {addableSupport.length > 0 && (
+              <>
+                <div className="text-[10px] uppercase tracking-wide mt-1" style={{ color: "#8b8778" }}>Other permanents</div>
+                {addableSupport.slice(0, 20).map((x) => (
+                  <button key={x.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { addToHand(x.id); setQ(""); if (searchRef.current) searchRef.current.focus(); }}
+                    className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
+                    <span className="min-w-0">
+                      <span className="font-semibold text-[14px] block" style={{ color: "#e6dfce" }}>{x.name}</span>
+                      <span className="text-[10px]" style={{ color: x.relevant ? "#93c7e6" : "#8b8778" }}>{x.relevant ? "affects your Auras" : x.typeLine}</span>
+                    </span>
+                    <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(232,184,75,0.2)" }}><Plus size={16} style={{ color: "#e8b84b" }} /></span>
+                  </button>
+                ))}
+              </>
+            )}
+            {addable.length === 0 && addableSupport.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>No match — check spelling.</div>}
           </div>
         ) : (
           <div className="text-[11px] mt-1.5" style={{ color: "#8b8778" }}>Type a card name, keyword, or mana value — tap a result to add it. Add all you can; the keyboard stays up.</div>
         )}
       </div>
 
-      {hand.size === 0 ? (
+      {handAuras.length === 0 && handSupport.length === 0 ? (
         <div className="rounded-xl p-4 text-center text-sm mb-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.15)", color: "#8b8778" }}>
           Your hand is empty — use the gold box above to add the cards you're holding.
         </div>
@@ -1072,6 +1118,7 @@ function PlayTab(p) {
           </div>
           )}
 
+          {handAuras.length > 0 && <div className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: "#c79a3e" }}>Auras</div>}
           <div className="grid gap-1.5 mb-3">
             {handAuras.map((a) => (
               <HandRow key={a.id} aura={a} info={auraInfo[a.id]} ctx={ctx} rec={best.ids.includes(a.id)} manaSet={total > 0}
@@ -1079,6 +1126,27 @@ function PlayTab(p) {
                 onRemove={() => removeFromHand(a.id)} onInfo={() => openInfo(a)} />
             ))}
           </div>
+
+          {handSupport.length > 0 && (
+            <>
+              <div className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: "#c79a3e" }}>Other permanents</div>
+              <p className="text-[10px] mb-1.5" style={{ color: "#6f6a5d" }}>Not scored — casting one puts it on your Board (no Light-Paws trigger).</p>
+              <div className="grid gap-1.5 mb-3">
+                {handSupport.map((x) => (
+                  <div key={x.id} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+                    <div className="min-w-0">
+                      <div className="font-bold text-[14px]" style={{ color: "#f0ead9" }}>{x.name}</div>
+                      <div className="text-[11px]" style={{ color: x.relevant ? "#93c7e6" : "#8b8778" }}>{x.relevant ? "affects your Auras" : x.typeLine}</div>
+                    </div>
+                    <div className="flex items-center gap-1.5 flex-shrink-0">
+                      <button onClick={() => castSupport(x.id)} className="text-xs font-bold rounded-lg px-3 py-1.5" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Cast</button>
+                      <button onClick={() => removeFromHand(x.id)} className="rounded-lg px-1.5 py-1.5" style={{ background: "rgba(255,255,255,0.06)" }}><X size={15} style={{ color: "#8b8778" }} /></button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </>
       )}
 
@@ -1128,6 +1196,8 @@ function WeightsEditor({ weights, setWeights }) {
       <WeightRow label="Token now" wkey="TOKEN_NOW" weights={weights} setWeights={setWeights} step={0.5} min={0} max={10} />
       <WeightRow label="Token conditional" wkey="TOKEN_COND" weights={weights} setWeights={setWeights} step={0.25} min={0} max={10} />
       <WeightRow label="ETB removal" wkey="ETB_REMOVAL" weights={weights} setWeights={setWeights} step={0.5} min={0} max={10} />
+      <Hd>Lethal</Hd>
+      <WeightRow label="Bonus when a play reaches lethal" wkey="LETHAL_BONUS" weights={weights} setWeights={setWeights} step={5} min={0} max={100} />
       <Hd>Double-strike connect chance</Hd>
       <WeightRow label="Evasive (flying / pro)" wkey="CONNECT_EVASIVE" weights={weights} setWeights={setWeights} step={0.05} min={0} max={1} />
       <WeightRow label="Ground (likely blocked)" wkey="CONNECT_GROUND" weights={weights} setWeights={setWeights} step={0.05} min={0} max={1} />
@@ -1210,188 +1280,175 @@ function PlayRow({ aura, info, ctx, rec, onTap, removal, onInfo }) {
 }
 
 /* ====================== TAB 3 · DECK ====================== */
-function DeckTab({ deck, setDeck, equipped, setEquipped, openInfo, synced, lib, onImport, importing }) {
-  const [q, setQ] = useState("");
+function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck, renameDeck, synced }) {
   const [imp, setImp] = useState("");
+  const [name, setName] = useState("");
   const [report, setReport] = useState(null);
+  const [replaceId, setReplaceId] = useState("");
 
-  const toggle = (id) => setDeck((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  const rows = lib.filter((a) => !q || norm(a.name).includes(norm(q))).sort((a, b) => a.name.localeCompare(b.name));
-
-  const runImport = async () => {
-    if (importing) return;
-    const res = await onImport(imp);
-    setReport(res);
+  const run = async () => {
+    if (importing || !imp.trim()) return;
+    const nm = name.trim() || (replaceId ? (decks.find((d) => d.id === replaceId) || {}).name : "") || `Deck ${decks.length + 1}`;
+    const res = await onImport(imp, nm, replaceId || null);
+    setReport(res); setImp(""); setName(""); setReplaceId("");
   };
 
   return (
     <div className="px-3 pt-4">
-      <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Deck · what you run</div>
-      <p className="text-xs mb-3" style={{ color: "#8b8778" }}>Choose which auras you're running — this powers the Active, Cast & Fetch tabs. {deck.size} auras selected.</p>
-      <div className="text-[11px] mb-3 flex items-center gap-1" style={{ color: synced ? "#8fd39a" : "#8b8778" }}>
-        {synced ? "✓ Card costs & stats synced from Scryfall" : "Using built-in card data (offline)"}
-      </div>
+      <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Deck · your saved decks</div>
+      <p className="text-xs mb-3" style={{ color: "#8b8778" }}>Import a Light-Paws decklist, then pick which deck you're playing. Everything saves on this device only.</p>
 
       {/* import */}
-      <Card>
-        <Lbl>Import a list</Lbl>
-        <p className="text-[11px] mb-2" style={{ color: "#8b8778" }}>Paste your Archidekt or MTGGoldfish export (one card per line). Anything not already built in is fetched from Scryfall and added automatically.</p>
-        <textarea value={imp} onChange={(e) => setImp(e.target.value)} rows={4} placeholder={"1 On Serra's Wings\n1 Ethereal Armor\n1x Griffin Guide (NEO) 12"}
-          className="w-full rounded-lg p-2 text-sm outline-none" style={{ background: "rgba(0,0,0,0.3)", color: "#ece7db", border: "1px solid rgba(255,255,255,0.12)" }} />
-        <div className="flex items-center gap-2 mt-2">
-          <button onClick={runImport} disabled={importing} className="flex items-center gap-1.5 text-sm font-bold rounded-lg px-3 py-1.5" style={{ background: importing ? "rgba(232,184,75,0.5)" : "#e8b84b", color: "#221a09" }}>
-            <Upload size={14} /> {importing ? "Importing…" : "Import"}
-          </button>
-          <button onClick={() => setDeck(new Set(lib.filter((a) => a.deck).map((a) => a.id)))} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>Load deck list</button>
-          <button onClick={() => setDeck(new Set())} className="text-xs px-2.5 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>Clear</button>
+      <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(232,184,75,0.09)", border: "1.5px solid rgba(232,184,75,0.55)" }}>
+        <div className="flex items-center gap-1.5 mb-2">
+          <Upload size={14} style={{ color: "#e8b84b" }} />
+          <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>Import a decklist</span>
         </div>
+        <textarea value={imp} onChange={(e) => setImp(e.target.value)} rows={5}
+          placeholder={"Paste your full decklist (Archidekt / Moxfield / MTGGoldfish)\n\n1 Light-Paws, Emperor's Voice\n1 Ethereal Armor\n1 Griffin Guide\n..."}
+          className="w-full rounded-lg p-2 text-sm outline-none" style={{ background: "rgba(0,0,0,0.35)", color: "#ece7db", border: "1px solid rgba(232,184,75,0.35)" }} />
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Deck name (e.g. Light-Paws 1)"
+          className="w-full rounded-lg p-2 text-sm outline-none mt-2" style={{ background: "rgba(0,0,0,0.35)", color: "#ece7db", border: "1px solid rgba(255,255,255,0.15)" }} />
+        {decks.length > 0 && (
+          <select value={replaceId} onChange={(e) => setReplaceId(e.target.value)}
+            className="w-full rounded-lg p-2 text-sm outline-none mt-2" style={{ background: "rgba(0,0,0,0.35)", color: "#ece7db", border: "1px solid rgba(255,255,255,0.15)" }}>
+            <option value="">Save as a new deck</option>
+            {decks.map((d) => <option key={d.id} value={d.id}>Overwrite: {d.name}</option>)}
+          </select>
+        )}
+        <button onClick={run} disabled={importing || !imp.trim()} className="w-full mt-2 text-sm font-bold rounded-lg py-2.5"
+          style={{ background: importing || !imp.trim() ? "rgba(232,184,75,0.4)" : "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+          {importing ? "Importing…" : "Import deck"}
+        </button>
         {report && (
           <div className="text-[11px] mt-2 leading-snug" style={{ color: "#b7b1a2" }}>
-            <span style={{ color: "#8fd39a" }}>Added {report.matched + report.enriched}</span>
-            {report.enriched > 0 && <span> ({report.enriched} newly fetched from Scryfall)</span>}{report.support > 0 && <span> · {report.support} non-Aura cards saved to the Board tab</span>}.
-            {report.rejected.length > 0 && <span> Couldn't use {report.rejected.length}: {report.rejected.slice(0, 6).join(", ")}{report.rejected.length > 6 ? `, +${report.rejected.length - 6} more` : ""}.</span>}
+            <span style={{ color: "#8fd39a" }}>Saved {report.total} cards</span> — {report.auras} auras playable, {report.support} other permanents for the Board tab.
+            {report.rejected.length > 0 && <span> Couldn't read {report.rejected.length}: {report.rejected.slice(0, 4).join(", ")}{report.rejected.length > 4 ? "…" : ""}.</span>}
           </div>
         )}
-      </Card>
-
-      {/* search */}
-      <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
-        <Search size={16} style={{ color: "#8b8778" }} />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter library…" className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
       </div>
 
-      <div className="grid gap-1.5 mb-4">
-        {rows.map((a) => (
-          <DeckRow key={a.id} a={a} on={deck.has(a.id)} onToggle={() => toggle(a.id)} onInfo={() => openInfo(a)} />
-        ))}
-      </div>
+      {synced && <div className="text-[11px] mb-3" style={{ color: "#8fd39a" }}>✓ Card data synced from Scryfall</div>}
+
+      {/* saved decks */}
+      <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: "#c79a3e" }}>Your decks ({decks.length})</div>
+      {decks.length === 0 ? (
+        <div className="rounded-xl p-4 text-center text-sm mb-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.15)", color: "#8b8778" }}>
+          No decks yet — paste your Light-Paws decklist above to get started.
+        </div>
+      ) : (
+        <div className="grid gap-1.5 mb-4">
+          {decks.map((d) => {
+            const on = d.id === activeId;
+            return (
+              <div key={d.id} className="rounded-lg px-3 py-2.5" style={{ background: on ? "rgba(232,184,75,0.14)" : "rgba(255,255,255,0.04)", border: on ? "1.5px solid #e8b84b" : "1px solid rgba(255,255,255,0.08)" }}>
+                <div className="flex items-center justify-between gap-2">
+                  <button onClick={() => selectDeck(d.id)} className="text-left min-w-0 flex-1">
+                    <div className="font-bold text-[15px] flex items-center gap-1.5" style={{ color: "#f0ead9" }}>
+                      {on && <Check size={14} style={{ color: "#e8b84b" }} />}{d.name}
+                    </div>
+                    <div className="text-[11px]" style={{ color: "#8b8778" }}>
+                      {(d.all || []).length} cards · {(d.auras || []).length} auras · {(d.support || []).length} other permanents
+                      {on && <span style={{ color: "#e8b84b" }}> · playing now</span>}
+                    </div>
+                  </button>
+                  <div className="flex items-center gap-1 flex-shrink-0">
+                    <button onClick={() => { const n = prompt("Rename deck", d.name); if (n && n.trim()) renameDeck(d.id, n.trim()); }}
+                      className="text-[11px] px-2 py-1 rounded" style={{ background: "rgba(255,255,255,0.08)", color: "#cfc9ba" }}>Rename</button>
+                    <button onClick={() => { if (confirm(`Delete "${d.name}"?`)) deleteDeck(d.id); }}
+                      className="rounded px-1.5 py-1" style={{ background: "rgba(255,255,255,0.08)" }}><X size={14} style={{ color: "#c98a8a" }} /></button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[11px] mb-6" style={{ color: "#6f6a5d" }}>Tap a deck to make it the one you're playing. View all its cards — and set which printings you own — on the Cards tab.</p>
     </div>
   );
 }
 
-function DeckRow({ a, on, onToggle, onInfo }) {
-  const h = useTapHold(onToggle, onInfo);
-  return (
-    <div {...h} className="flex items-center justify-between rounded-lg px-3 py-2 text-left"
-      style={{ background: on ? "rgba(232,184,75,0.12)" : "rgba(255,255,255,0.03)", border: on ? "1px solid #e8b84b" : "1px solid rgba(255,255,255,0.07)", cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="flex items-center justify-center rounded" style={{ width: 20, height: 20, background: on ? "#e8b84b" : "transparent", border: on ? "none" : "1.5px solid rgba(255,255,255,0.25)" }}>
-          {on && <Check size={14} style={{ color: "#221a09" }} />}
-        </span>
-        <span className="font-semibold text-[14px]" style={{ color: on ? "#f0ead9" : "#b7b1a2" }}>{a.name}</span>
-      </div>
-      <ManaCost aura={a} />
-    </div>
-  );
-}
-
-/* ====================== TAB 4 · ALL AURAS (Scryfall) ====================== */
-function AllAurasTab({ onPick, chosenPrints, deckNames }) {
-  const [cards, setCards] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState(null);
+function DeckViewTab({ decks, activeId, onPick, chosenPrints, openInfoCard }) {
+  const [viewId, setViewId] = useState(activeId || (decks[0] && decks[0].id) || "");
   const [q, setQ] = useState("");
-  const [filters, setFilters] = useState(() => new Set());
-  const [deckOnly, setDeckOnly] = useState(false);
+  const deck = decks.find((d) => d.id === (viewId || activeId)) || decks[0] || null;
+  const cards = deck ? (deck.all || []) : [];
+  const shown = cards.filter((c) => !q || norm(c.name).includes(norm(q)) || norm(c.typeLine || "").includes(norm(q)))
+    .slice().sort((a, b) => a.name.localeCompare(b.name));
 
-  const load = async () => {
-    setLoading(true); setErr(null);
-    try {
-      const query = 't:aura id<=w game:paper (o:"enchant creature" or o:"enchant permanent")';
-      let url = "https://api.scryfall.com/cards/search?order=name&unique=cards&q=" + encodeURIComponent(query);
-      const all = []; let pages = 0;
-      while (url && pages < 6) {
-        const r = await fetch(url, { headers: { Accept: "application/json" } });
-        if (!r.ok) throw new Error("Scryfall " + r.status);
-        const d = await r.json();
-        (d.data || []).forEach((c) => all.push(c));
-        url = d.has_more ? d.next_page : null; pages++;
-        if (url) await new Promise((res) => setTimeout(res, 90)); // be polite
-      }
-      setCards(all);
-    } catch (e) { setErr(e.message || "Couldn't reach Scryfall."); }
-    setLoading(false);
+  const group = (c) => {
+    const t = (c.typeLine || "").toLowerCase();
+    if (/aura/.test(t)) return "Auras";
+    if (/land/.test(t)) return "Lands";
+    if (/creature/.test(t)) return "Creatures";
+    if (/enchantment/.test(t)) return "Enchantments";
+    if (/artifact/.test(t)) return "Artifacts";
+    return "Other";
   };
-  useEffect(() => { load(); }, []);
+  const order = ["Auras", "Creatures", "Enchantments", "Artifacts", "Lands", "Other"];
+  const grouped = order.map((g) => [g, shown.filter((c) => group(c) === g)]).filter(([, list]) => list.length);
 
-  const KWORDS = ["flying", "first strike", "double strike", "vigilance", "lifelink", "hexproof", "ward", "indestructible", "protection", "trample", "menace", "deathtouch"];
-  const toggleF = (k) => setFilters((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
-
-  const shown = useMemo(() => {
-    if (!cards) return [];
-    const t = q.toLowerCase();
-    return cards.filter((c) => {
-      if (deckOnly && !(deckNames && deckNames.has(c.name))) return false;
-      const txt = (c.oracle_text || "").toLowerCase();
-      if (t && !c.name.toLowerCase().includes(t) && !txt.includes(t)) return false;
-      if (filters.size && ![...filters].every((f) => txt.includes(f))) return false;
-      return true;
-    });
-  }, [cards, q, filters, deckOnly, deckNames]);
+  if (!decks.length) {
+    return (
+      <div className="px-3 pt-4">
+        <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Cards · your deck</div>
+        <div className="rounded-xl p-4 text-center text-sm mt-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.15)", color: "#8b8778" }}>
+          Import your Light-Paws Commander deck on the Deck tab to start playing!
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="px-3 pt-4">
-      <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Browse · every aura</div>
-      <p className="text-xs mb-3" style={{ color: "#8b8778" }}>Every white aura in Magic. Tap a card to set which printing you own; ★ marks cards in your deck. Live from Scryfall.</p>
+      <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Cards · your deck</div>
+      <p className="text-xs mb-2" style={{ color: "#8b8778" }}>Every card in the deck. Tap one to choose the printing you own; press and hold for the full card.</p>
 
-      <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
+      <select value={viewId || (deck ? deck.id : "")} onChange={(e) => setViewId(e.target.value)}
+        className="w-full rounded-lg p-2 text-sm outline-none mb-2" style={{ background: "rgba(0,0,0,0.35)", color: "#ece7db", border: "1px solid rgba(255,255,255,0.15)" }}>
+        {decks.map((d) => <option key={d.id} value={d.id}>{d.name}{d.id === activeId ? " (playing)" : ""}</option>)}
+      </select>
+
+      <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-3" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
         <Search size={16} style={{ color: "#8b8778" }} />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name or text…" className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter this deck…" className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
+        {q && <button onClick={() => setQ("")}><X size={15} style={{ color: "#8b8778" }} /></button>}
       </div>
-      <NoSwipe className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-2" style={{ WebkitOverflowScrolling: "touch" }}>
-        <button onClick={() => setDeckOnly((v) => !v)} className="text-[11px] font-bold rounded-full px-3 py-1 whitespace-nowrap flex-shrink-0 flex items-center gap-1"
-          style={{ background: deckOnly ? "linear-gradient(160deg,#e8b84b,#c1902f)" : "rgba(232,184,75,0.12)", color: deckOnly ? "#221a09" : "#e8b84b", border: deckOnly ? "none" : "1px solid rgba(232,184,75,0.4)" }}>
-          <Star size={11} fill={deckOnly ? "#221a09" : "none"} /> My deck
-        </button>
-        <span style={{ width: 1, height: 18, background: "rgba(255,255,255,0.12)", flexShrink: 0 }} />
-        <Filter size={13} style={{ color: "#8b8778", flexShrink: 0 }} />
-        {KWORDS.map((k) => {
-          const on = filters.has(k);
-          return <button key={k} onClick={() => toggleF(k)} className="text-[11px] font-semibold rounded-full px-2.5 py-1 whitespace-nowrap flex-shrink-0"
-            style={{ background: on ? "#e8b84b" : "rgba(255,255,255,0.06)", color: on ? "#221a09" : "#a8a293", border: on ? "none" : "1px solid rgba(255,255,255,0.1)", textTransform: "capitalize" }}>{k}</button>;
-        })}
-      </NoSwipe>
 
-      {loading && <div className="text-center py-8 text-sm" style={{ color: "#9a9484" }}>Summoning the archive…</div>}
-      {err && (
-        <div className="rounded-lg p-3 text-sm" style={{ background: "rgba(214,93,93,0.12)", color: "#e6939a" }}>
-          Couldn't load the live database ({err}). Check your connection and <button onClick={load} className="underline font-bold">retry</button>. The Board, Play, and Deck tabs work offline.
-        </div>
-      )}
-
-      {cards && !loading && (
-        <>
-          <div className="text-[11px] mb-2" style={{ color: "#8b8778" }}>{shown.length} of {cards.length} auras{shown.length > 200 ? " · showing first 200" : ""} · tap a card to set your printing</div>
-          <div className="grid gap-1.5 mb-4">
-            {shown.slice(0, 200).map((c) => {
+      <div className="text-[11px] mb-2" style={{ color: "#8b8778" }}>{shown.length} of {cards.length} cards</div>
+      {grouped.map(([g, list]) => (
+        <div key={g} className="mb-3">
+          <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: "#c79a3e" }}>{g} ({list.length})</div>
+          <div className="grid gap-1.5">
+            {list.map((c) => {
               const chosen = chosenPrints[c.name];
-              const inDeck = deckNames && deckNames.has(c.name);
-              return (
-                <button key={c.id} onClick={() => onPick(c)} className="text-left rounded-lg px-3 py-2 w-full"
-                  style={{ background: inDeck ? "rgba(232,184,75,0.09)" : "rgba(255,255,255,0.04)", border: chosen ? "1px solid rgba(232,184,75,0.7)" : inDeck ? "1px solid rgba(232,184,75,0.4)" : "1px solid rgba(255,255,255,0.08)" }}>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="font-bold text-[15px] flex items-center gap-1.5" style={{ color: "#f0ead9" }}>
-                      {inDeck && <Star size={13} style={{ color: "#e8b84b", flexShrink: 0 }} fill="#e8b84b" />}
-                      {c.name}
-                    </span>
-                    <ScryCost cost={c.mana_cost} />
-                  </div>
-                  <div className="text-[10.5px] mt-0.5" style={{ color: "#8b8778" }}>{c.type_line}</div>
-                  {c.oracle_text && <div className="text-[11.5px] mt-1 leading-snug" style={{ color: "#b7b1a2" }}>{c.oracle_text}</div>}
-                  <div className="text-[10px] mt-1.5 font-semibold" style={{ color: chosen ? "#e8b84b" : "#6f6a5d" }}>
-                    {chosen ? `✓ Your printing: ${(chosen.setName || (chosen.set || "").toUpperCase())} #${chosen.collector}` : "Tap to choose your set / printing →"}
-                  </div>
-                </button>
-              );
+              return <DeckCardRow key={c.name} card={c} chosen={chosen} onPick={() => onPick({ name: c.name })} onInfo={() => openInfoCard({ name: c.name, cost: { c: 0, w: 0 }, kw: [], note: c.typeLine })} />;
             })}
           </div>
-        </>
-      )}
+        </div>
+      ))}
     </div>
   );
 }
 
-/* ====================== shared bits ====================== */
+function DeckCardRow({ card, chosen, onPick, onInfo }) {
+  const h = useTapHold(onPick, onInfo);
+  return (
+    <div {...h} className="rounded-lg px-3 py-2"
+      style={{ background: "rgba(255,255,255,0.04)", border: chosen ? "1px solid rgba(232,184,75,0.6)" : "1px solid rgba(255,255,255,0.08)", cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-semibold text-[14px]" style={{ color: "#f0ead9" }}>{card.name}</span>
+        <ScryCost cost={card.manaCost} />
+      </div>
+      <div className="text-[10.5px] mt-0.5" style={{ color: "#8b8778" }}>{card.typeLine}</div>
+      <div className="text-[10px] mt-1 font-semibold" style={{ color: chosen ? "#e8b84b" : "#6f6a5d" }}>
+        {chosen ? `✓ ${(chosen.setName || (chosen.set || "").toUpperCase())} #${chosen.collector}` : "Tap to choose your printing →"}
+      </div>
+    </div>
+  );
+}
+
 function Card({ children }) { return <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.09)" }}>{children}</div>; }
 function Lbl({ children, inline }) { return <div className={"text-xs font-bold uppercase tracking-wide " + (inline ? "" : "mb-2")} style={{ color: "#c79a3e" }}>{children}</div>; }
 
@@ -1763,7 +1820,7 @@ function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduc
             </div>
           ))}
         </div>
-        <p className="text-[10px] mt-1.5" style={{ color: "#6f6a5d" }}>Attached Auras are counted automatically — feeds All That Glitters, Ethereal Armor &amp; Armored Ascension.</p>
+        <p className="text-[10px] mt-1.5" style={{ color: "#6f6a5d" }}>Attached Auras are counted automatically. These feed auras that scale with permanents you control.</p>
       </Card>
 
       {/* effect summary */}
@@ -1832,7 +1889,7 @@ function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduc
 }
 
 /* ====================== TAB · FETCH (Light-Paws trigger) ====================== */
-function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv, loopActive, onBackToCast, ctx, equippedIds, curDS, resetTurn }) {
+function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv, loopActive, onBackToCast, onAfterFetch, ctx, equippedIds, curDS, resetTurn }) {
   const [q, setQ] = useState("");
   const [kwFilters, setKwFilters] = useState(() => new Set());
   const [showHelp, setShowHelp] = useState(false);
@@ -1908,7 +1965,7 @@ function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, c
       </div>
       <div className="grid gap-1.5 mb-4">
         {buffs.map(({ a, ev }, i) => (
-          <FetchRow key={a.id} a={a} ev={ev} first={i === 0} onEquip={() => equip(a.id)} onInfo={() => openInfo(a)} />
+          <FetchRow key={a.id} a={a} ev={ev} first={i === 0} onEquip={() => { equip(a.id); onAfterFetch && onAfterFetch(); }} onInfo={() => openInfo(a)} />
         ))}
         {buffs.length === 0 && <div className="text-sm italic py-3 text-center" style={{ color: "#6f6a5d" }}>{q ? "No fetchable auras match that." : "No fetchable equip auras left at this cost."}</div>}
       </div>
