@@ -149,6 +149,7 @@ const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /* ---- deck links: Archidekt / Moxfield / MTGGoldfish → plain decklist text ---- */
 const URL_RE = /^https?:\/\/\S+$/i;
+function deckCount(d) { if (!d) return 0; if (d.count) return d.count; return (d.all || []).reduce((n, c) => n + (c.qty || 1), 0); }
 function isDeckUrl(t) { const x = (t || "").trim(); return URL_RE.test(x) && !/\s/.test(x); }
 
 function parseDeckUrl(raw) {
@@ -475,8 +476,11 @@ export default function LightPawsConsole() {
   // Parse a pasted decklist into a full deck object: auras (playable), support (board), all (viewing).
   async function buildDeckFromList(text) {
     const names = [];
+    const qtyByKey = {};
     text.split("\n").forEach((raw) => {
       let line = raw.trim();
+      const qm = line.match(/^(\d+)\s*x?\s+/i);
+      const qty = qm ? Math.max(1, parseInt(qm[1], 10)) : 1;
       if (!line) return;
       if (/^\/\//.test(line)) return;                                             // "// Commander" style comments
       if (/^(deck|main|mainboard|commanders?|companions?|sideboard|maybeboard|considering|about|tokens?)\s*:?\s*(\(\d+\))?$/i.test(line)) return;  // section headers only
@@ -488,8 +492,10 @@ export default function LightPawsConsole() {
         .replace(/(\s+\*[^*]*\*)+\s*$/, "")          // *F* / *E* foil markers
         .replace(/\s*\([^)]*\)\s*[\w-]*\s*$/, "")    // (SET) 123 printing
         .trim();
-      if (line) names.push(line);
+      if (line) { names.push(line); qtyByKey[norm(line)] = (qtyByKey[norm(line)] || 0) + qty; }
     });
+    // look up a Scryfall card's quantity (handles "Front // Back" names requested by front face)
+    const qtyOf = (c) => qtyByKey[norm(c.name)] || qtyByKey[norm((c.name || "").split(" // ")[0])] || 1;
     const uniq = [...new Map(names.map((n) => [norm(n), n])).values()];
     const auras = [], support = [], all = [], rejected = [];
     for (let i = 0; i < uniq.length; i += 75) {
@@ -502,7 +508,7 @@ export default function LightPawsConsole() {
         if (!r.ok) { rejected.push(...chunk); continue; }
         const d = await r.json();
         (d.data || []).forEach((c) => {
-          all.push({ name: c.name, typeLine: c.type_line || "", manaCost: c.mana_cost || "", cmc: c.cmc || 0 });
+          all.push({ name: c.name, typeLine: c.type_line || "", manaCost: c.mana_cost || "", cmc: c.cmc || 0, qty: qtyOf(c) });
           const builtin = builtinByName[norm(c.name)];
           if (builtin) { auras.push(builtin); return; }           // keep hand-tuned scoring where we have it
           const res = deriveAura(c);
@@ -529,6 +535,7 @@ export default function LightPawsConsole() {
         id: replaceId || ("deck_" + Date.now()),
         name: name || "Untitled deck",
         auras: built.auras, support: built.support, all: built.all,
+        count: built.all.reduce((n, c) => n + (c.qty || 1), 0),
       };
       setDecks((prev) => {
         const without = prev.filter((d) => d.id !== deckObj.id);
@@ -536,7 +543,7 @@ export default function LightPawsConsole() {
       });
       setActiveId(deckObj.id);
       setEquipped(new Set()); setHand(new Set()); setOnBoard(new Set());
-      return { auras: built.auras.length, support: built.support.length, total: built.all.length, rejected: built.rejected };
+      return { auras: built.auras.length, support: built.support.length, total: deckObj.count, unique: built.all.length, rejected: built.rejected };
     } finally { setImporting(false); }
   }
 
@@ -1433,7 +1440,7 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
         {linkErr && <div className="text-[11px] mt-2 leading-snug" style={{ color: "#e6939a" }}>{linkErr}</div>}
         {report && (
           <div className="text-[11px] mt-2 leading-snug" style={{ color: "#b7b1a2" }}>
-            <span style={{ color: "#8fd39a" }}>Saved {report.total} cards{report.site ? ` from ${report.site}` : ""}</span> — {report.auras} auras playable, {report.support} other permanents for the Board tab.
+            <span style={{ color: "#8fd39a" }}>Saved {report.total} cards{report.unique !== report.total ? ` (${report.unique} unique)` : ""}{report.site ? ` from ${report.site}` : ""}</span> — {report.auras} auras playable, {report.support} other permanents for the Board tab.
             {report.rejected.length > 0 && <span> Couldn't read {report.rejected.length}: {report.rejected.slice(0, 4).join(", ")}{report.rejected.length > 4 ? "…" : ""}.</span>}
           </div>
         )}
@@ -1459,7 +1466,7 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
                       {on && <Check size={14} style={{ color: "#e8b84b" }} />}{d.name}
                     </div>
                     <div className="text-[11px]" style={{ color: "#8b8778" }}>
-                      {(d.all || []).length} cards · {(d.auras || []).length} auras · {(d.support || []).length} other permanents
+                      {deckCount(d)} cards{deckCount(d) !== (d.all || []).length ? ` · ${(d.all || []).length} unique` : ""} · {(d.auras || []).length} auras · {(d.support || []).length} other permanents
                       {on && <span style={{ color: "#e8b84b" }}> · playing now</span>}
                     </div>
                   </button>
@@ -1527,7 +1534,7 @@ function DeckViewTab({ decks, activeId, onPick, chosenPrints, openInfoCard }) {
         {q && <button onClick={() => setQ("")}><X size={15} style={{ color: "#8b8778" }} /></button>}
       </div>
 
-      <div className="text-[11px] mb-2" style={{ color: "#8b8778" }}>{shown.length} of {cards.length} cards</div>
+      <div className="text-[11px] mb-2" style={{ color: "#8b8778" }}>{q ? `${shown.length} of ${cards.length} unique` : `${deckCount(deck)} cards · ${cards.length} unique`}</div>
       {grouped.map(([g, list]) => (
         <div key={g} className="mb-3">
           <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: "#c79a3e" }}>{g} ({list.length})</div>
@@ -1549,7 +1556,7 @@ function DeckCardRow({ card, chosen, onPick, onInfo }) {
     <div {...h} className="rounded-lg px-3 py-2"
       style={{ background: "rgba(255,255,255,0.04)", border: chosen ? "1px solid rgba(232,184,75,0.6)" : "1px solid rgba(255,255,255,0.08)", cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
       <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold text-[14px]" style={{ color: "#f0ead9" }}>{card.name}</span>
+        <span className="font-semibold text-[14px]" style={{ color: "#f0ead9" }}>{card.qty > 1 && <span style={{ color: "#e8b84b" }}>{card.qty}× </span>}{card.name}</span>
         <ScryCost cost={card.manaCost} />
       </div>
       <div className="text-[10.5px] mt-0.5" style={{ color: "#8b8778" }}>{card.typeLine}</div>
