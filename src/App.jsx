@@ -12,7 +12,7 @@ const AD_CLIENT  = "";   // AdSense publisher id, e.g. "ca-pub-0000000000000000"
 const AD_SLOT    = "";   // AdSense ad-unit slot id, e.g. "1234567890"
 // Optional deck-link proxy (see cloudflare-worker/README.md). Used only when a site blocks
 // direct browser requests. e.g. "https://light-paws-proxy.yourname.workers.dev"
-const DECK_PROXY_URL = "";
+const DECK_PROXY_URL = "https://light-paws-proxy.jrkline1116.workers.dev";
 
 /* ============================================================
    LIGHT-PAWS COMPANION
@@ -520,6 +520,11 @@ export default function LightPawsConsole() {
     setImporting(true);
     try {
       const built = await buildDeckFromList(text);
+      if (!built.all.length) {
+        return { error: built.rejected.length
+          ? `No cards recognized — nothing was saved. Couldn't read: ${built.rejected.slice(0, 3).join(", ")}${built.rejected.length > 3 ? "…" : ""}`
+          : "No cards found — nothing was saved." };
+      }
       const deckObj = {
         id: replaceId || ("deck_" + Date.now()),
         name: name || "Untitled deck",
@@ -1393,6 +1398,7 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
     }
     const nm = name.trim() || (replaceId ? (decks.find((d) => d.id === replaceId) || {}).name : "") || fetchedName || `Deck ${decks.length + 1}`;
     const res = await onImport(text, nm, replaceId || null);
+    if (res && res.error) { setLinkErr(res.error); return; }       // keep the input so it can be fixed
     setReport({ ...res, site }); setImp(""); setName(""); setReplaceId("");
   };
 
