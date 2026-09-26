@@ -10,6 +10,9 @@ import {
 const DONATE_URL = "https://buymeacoffee.com/jrkline1116";   // e.g. "https://ko-fi.com/yourname"
 const AD_CLIENT  = "";   // AdSense publisher id, e.g. "ca-pub-0000000000000000"
 const AD_SLOT    = "";   // AdSense ad-unit slot id, e.g. "1234567890"
+// Optional deck-link proxy (see cloudflare-worker/README.md). Used only when a site blocks
+// direct browser requests. e.g. "https://light-paws-proxy.yourname.workers.dev"
+const DECK_PROXY_URL = "";
 
 /* ============================================================
    LIGHT-PAWS COMPANION
@@ -143,6 +146,85 @@ const LIBRARY = [
 
 const byId = Object.fromEntries(LIBRARY.map((a) => [a.id, a]));
 const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/* ---- deck links: Archidekt / Moxfield / MTGGoldfish → plain decklist text ---- */
+const URL_RE = /^https?:\/\/\S+$/i;
+function isDeckUrl(t) { const x = (t || "").trim(); return URL_RE.test(x) && !/\s/.test(x); }
+
+function parseDeckUrl(raw) {
+  let u; try { u = new URL(raw.trim()); } catch { return null; }
+  const host = u.hostname.replace(/^www\./, "").toLowerCase();
+  const parts = u.pathname.split("/").filter(Boolean);
+  if (host === "archidekt.com" && parts[0] === "decks" && /^\d+$/.test(parts[1] || ""))
+    return { site: "Archidekt", kind: "json", api: `https://archidekt.com/api/decks/${parts[1]}/` };
+  if (host === "moxfield.com" && parts[0] === "decks" && parts[1])
+    return { site: "Moxfield", kind: "json", api: `https://api2.moxfield.com/v3/decks/all/${parts[1]}` };
+  if (host === "mtggoldfish.com" && parts[0] === "deck") {
+    const id = parts[1] === "download" ? parts[2] : parts[1];
+    if (/^\d+$/.test(id || "")) return { site: "MTGGoldfish", kind: "text", api: `https://www.mtggoldfish.com/deck/download/${id}` };
+  }
+  return { site: null };
+}
+
+// Archidekt: skip cards whose category is excluded from the deck (Maybeboard, Sideboard, etc.)
+function archidektToText(d) {
+  const excluded = new Set((d.categories || []).filter((c) => c.includedInDeck === false).map((c) => c.name));
+  const lines = [];
+  (d.cards || []).forEach((e) => {
+    const nm = e.card && e.card.oracleCard && e.card.oracleCard.name;
+    if (!nm) return;
+    const cats = e.categories || [];
+    if (cats.length && excluded.has(cats[0])) return;
+    lines.push(`${e.quantity || 1} ${nm}`);
+  });
+  return { text: lines.join("\n"), name: d.name || "" };
+}
+
+// Moxfield: commanders + mainboard (+ companions); ignore sideboard/maybeboard
+function moxfieldToText(d) {
+  const b = d.boards || {};
+  const lines = [];
+  ["commanders", "companions", "mainboard"].forEach((k) => {
+    const cards = (b[k] && b[k].cards) || {};
+    Object.values(cards).forEach((e) => { if (e && e.card && e.card.name) lines.push(`${e.quantity || 1} ${e.card.name}`); });
+  });
+  return { text: lines.join("\n"), name: d.name || "" };
+}
+
+async function fetchVia(url, kind) {
+  const attempts = [url];
+  if (DECK_PROXY_URL) attempts.push(DECK_PROXY_URL.replace(/\/$/, "") + "/?url=" + encodeURIComponent(url));
+  let lastErr = null;
+  for (const a of attempts) {
+    try {
+      const r = await fetch(a, { headers: { Accept: kind === "json" ? "application/json" : "text/plain" } });
+      if (r.status === 404) throw Object.assign(new Error("notfound"), { code: 404 });
+      if (!r.ok) { lastErr = new Error("http " + r.status); continue; }
+      return kind === "json" ? await r.json() : await r.text();
+    } catch (e) { if (e.code === 404) throw e; lastErr = e; }
+  }
+  throw lastErr || new Error("failed");
+}
+
+// Returns { text, name, site } or throws Error with a user-facing message.
+async function deckFromUrl(raw) {
+  const info = parseDeckUrl(raw);
+  if (!info) throw new Error("That doesn't look like a valid link.");
+  if (!info.site) throw new Error("Deck links work for Archidekt, Moxfield and MTGGoldfish (a specific deck page). For other sites, paste the exported text list.");
+  let data;
+  try { data = await fetchVia(info.api, info.kind); }
+  catch (e) {
+    if (e.code === 404) throw new Error(`${info.site} couldn't find that deck — is it public?`);
+    throw new Error(`Couldn't reach ${info.site} from the browser. On ${info.site}, use Export → Text and paste the list here instead.`);
+  }
+  let out;
+  if (info.site === "Archidekt") out = archidektToText(data);
+  else if (info.site === "Moxfield") out = moxfieldToText(data);
+  else out = { text: String(data || ""), name: "" };
+  if (/<html|<!doctype/i.test(out.text)) throw new Error(`${info.site} returned a web page instead of a decklist. Paste the exported text list instead.`);
+  if (!out.text.trim()) throw new Error(`That ${info.site} deck came back empty — is it public?`);
+  return { ...out, site: info.site };
+}
 
 // --- Scryfall enrichment parsers: turn authoritative card data into our fields ---
 function parseCost(manaCost) {
@@ -396,8 +478,16 @@ export default function LightPawsConsole() {
     text.split("\n").forEach((raw) => {
       let line = raw.trim();
       if (!line) return;
-      if (/^(deck|commander|sideboard|maybeboard|about)\b/i.test(line)) return;
-      line = line.replace(/^\d+\s*x?\s+/i, "").replace(/\s*\([^)]*\)\s*[\w-]*\s*$/, "").replace(/\s+\*[^*]*\*\s*$/, "").replace(/\s+#.*$/, "").trim();
+      if (/^\/\//.test(line)) return;                                             // "// Commander" style comments
+      if (/^(deck|main|mainboard|commanders?|companions?|sideboard|maybeboard|considering|about|tokens?)\s*:?\s*(\(\d+\))?$/i.test(line)) return;  // section headers only
+      if (/^name\s/i.test(line)) return;                                        // Arena "About / Name X" block
+      line = line.replace(/^\d+\s*x?\s+/i, "")
+        .replace(/\s+#.*$/, "")                       // Moxfield #tags
+        .replace(/\s*\^[^^]*\^/g, "")                 // Archidekt ^color tags^
+        .replace(/\s*\[[^\]]*\]/g, "")                // Archidekt [Categories]
+        .replace(/(\s+\*[^*]*\*)+\s*$/, "")          // *F* / *E* foil markers
+        .replace(/\s*\([^)]*\)\s*[\w-]*\s*$/, "")    // (SET) 123 printing
+        .trim();
       if (line) names.push(line);
     });
     const uniq = [...new Map(names.map((n) => [norm(n), n])).values()];
@@ -1286,11 +1376,24 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
   const [report, setReport] = useState(null);
   const [replaceId, setReplaceId] = useState("");
 
+  const [linkBusy, setLinkBusy] = useState(false);
+  const [linkErr, setLinkErr] = useState("");
+  const isLink = isDeckUrl(imp);
+  const busy = importing || linkBusy;
+
   const run = async () => {
-    if (importing || !imp.trim()) return;
-    const nm = name.trim() || (replaceId ? (decks.find((d) => d.id === replaceId) || {}).name : "") || `Deck ${decks.length + 1}`;
-    const res = await onImport(imp, nm, replaceId || null);
-    setReport(res); setImp(""); setName(""); setReplaceId("");
+    if (busy || !imp.trim()) return;
+    setLinkErr(""); setReport(null);
+    let text = imp, fetchedName = "", site = "";
+    if (isLink) {
+      setLinkBusy(true);
+      try { const d = await deckFromUrl(imp); text = d.text; fetchedName = d.name; site = d.site; }
+      catch (e) { setLinkErr(e.message || "Couldn't load that link."); setLinkBusy(false); return; }
+      setLinkBusy(false);
+    }
+    const nm = name.trim() || (replaceId ? (decks.find((d) => d.id === replaceId) || {}).name : "") || fetchedName || `Deck ${decks.length + 1}`;
+    const res = await onImport(text, nm, replaceId || null);
+    setReport({ ...res, site }); setImp(""); setName(""); setReplaceId("");
   };
 
   return (
@@ -1304,8 +1407,8 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
           <Upload size={14} style={{ color: "#e8b84b" }} />
           <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>Import a decklist</span>
         </div>
-        <textarea value={imp} onChange={(e) => setImp(e.target.value)} rows={5}
-          placeholder={"Paste your full decklist (Archidekt / Moxfield / MTGGoldfish)\n\n1 Light-Paws, Emperor's Voice\n1 Ethereal Armor\n1 Griffin Guide\n..."}
+        <textarea value={imp} onChange={(e) => { setImp(e.target.value); setLinkErr(""); }} rows={5}
+          placeholder={"Paste a deck link (Archidekt / Moxfield / MTGGoldfish)\n— or the full decklist text —\n\n1 Light-Paws, Emperor's Voice\n1 Ethereal Armor\n..."}
           className="w-full rounded-lg p-2 text-sm outline-none" style={{ background: "rgba(0,0,0,0.35)", color: "#ece7db", border: "1px solid rgba(232,184,75,0.35)" }} />
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Deck name (e.g. Light-Paws 1)"
           className="w-full rounded-lg p-2 text-sm outline-none mt-2" style={{ background: "rgba(0,0,0,0.35)", color: "#ece7db", border: "1px solid rgba(255,255,255,0.15)" }} />
@@ -1316,13 +1419,15 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
             {decks.map((d) => <option key={d.id} value={d.id}>Overwrite: {d.name}</option>)}
           </select>
         )}
-        <button onClick={run} disabled={importing || !imp.trim()} className="w-full mt-2 text-sm font-bold rounded-lg py-2.5"
-          style={{ background: importing || !imp.trim() ? "rgba(232,184,75,0.4)" : "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
-          {importing ? "Importing…" : "Import deck"}
+        {isLink && !busy && <div className="text-[11px] mt-2" style={{ color: "#93c7e6" }}>Deck link detected — the list will be pulled from the site{name.trim() ? "" : " (and named from it)"}.</div>}
+        <button onClick={run} disabled={busy || !imp.trim()} className="w-full mt-2 text-sm font-bold rounded-lg py-2.5"
+          style={{ background: busy || !imp.trim() ? "rgba(232,184,75,0.4)" : "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+          {linkBusy ? "Loading deck…" : importing ? "Importing…" : isLink ? "Import from link" : "Import deck"}
         </button>
+        {linkErr && <div className="text-[11px] mt-2 leading-snug" style={{ color: "#e6939a" }}>{linkErr}</div>}
         {report && (
           <div className="text-[11px] mt-2 leading-snug" style={{ color: "#b7b1a2" }}>
-            <span style={{ color: "#8fd39a" }}>Saved {report.total} cards</span> — {report.auras} auras playable, {report.support} other permanents for the Board tab.
+            <span style={{ color: "#8fd39a" }}>Saved {report.total} cards{report.site ? ` from ${report.site}` : ""}</span> — {report.auras} auras playable, {report.support} other permanents for the Board tab.
             {report.rejected.length > 0 && <span> Couldn't read {report.rejected.length}: {report.rejected.slice(0, 4).join(", ")}{report.rejected.length > 4 ? "…" : ""}.</span>}
           </div>
         )}
@@ -1334,7 +1439,7 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
       <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: "#c79a3e" }}>Your decks ({decks.length})</div>
       {decks.length === 0 ? (
         <div className="rounded-xl p-4 text-center text-sm mb-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.15)", color: "#8b8778" }}>
-          No decks yet — paste your Light-Paws decklist above to get started.
+          No decks yet — paste your Light-Paws deck link or decklist above to get started.
         </div>
       ) : (
         <div className="grid gap-1.5 mb-4">
