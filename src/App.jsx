@@ -472,6 +472,8 @@ export default function LightPawsConsole() {
     return (activeDeck.auras || []).map((a) => builtinByName[norm(a.name)] || a);
   }, [activeDeck, builtinByName]);
   const supportPool = useMemo(() => (activeDeck ? activeDeck.support || [] : []), [activeDeck]);
+  // name lookup that knows about imported cards (ids like "imp_…"), falling back to the built-in library
+  const nameOf = (id) => { const c = deckAuras.find((x) => x.id === id) || supportPool.find((x) => x.id === id); return c ? c.name : byName(id); };
 
   // Parse a pasted decklist into a full deck object: auras (playable), support (board), all (viewing).
   async function buildDeckFromList(text) {
@@ -806,7 +808,7 @@ export default function LightPawsConsole() {
           <BoardTab {...{ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, lethalNeed, setLethalNeed, curDS }} />
         )}
         {hasDeck && tab === 1 && (
-          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard }} />
+          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName: nameOf, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard }} />
         )}
         {hasDeck && tab === 2 && (
           <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast, onAfterFetch: () => setTab(1), ctx, equippedIds, curDS, resetTurn }} />
@@ -1058,9 +1060,11 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
 function PlayTab(p) {
   const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard } = p;
   const [q, setQ] = useState("");
+  const [browse, setBrowse] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const searchRef = useRef(null);
   const total = white + other;
+  const listOpen = !!q || browse;
 
   const addable = deckAuras
     .filter((a) => !hand.has(a.id) && !equipped.has(a.id) && auraMatchesText(a, q))
@@ -1124,12 +1128,14 @@ function PlayTab(p) {
         </div>
         <div className="flex items-center gap-2 rounded-lg px-3 py-2.5" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(232,184,75,0.45)" }}>
           <Search size={18} style={{ color: "#e8b84b" }} />
-          <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Type a card you drew…" className="bg-transparent outline-none text-base w-full" style={{ color: "#ece7db" }} />
-          {q && <button onClick={() => setQ("")}><X size={16} style={{ color: "#8b8778" }} /></button>}
+          <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} onFocus={() => setBrowse(true)} onClick={() => setBrowse(true)} placeholder="Type or tap to browse…" className="bg-transparent outline-none text-base w-full" style={{ color: "#ece7db" }} />
+          {q && <button onMouseDown={(e) => e.preventDefault()} onClick={() => setQ("")}><X size={16} style={{ color: "#8b8778" }} /></button>}
+          <BrowseToggle open={listOpen} onToggle={() => { if (listOpen) { setBrowse(false); setQ(""); if (searchRef.current) searchRef.current.blur(); } else setBrowse(true); }} />
         </div>
-        {q ? (
-          <div className="grid gap-1.5 mt-2">
-            {addable.slice(0, 60).map((a) => (
+        {listOpen ? (
+          <div className="grid gap-1.5 mt-2" style={!q ? { maxHeight: 340, overflowY: "auto", WebkitOverflowScrolling: "touch" } : undefined}>
+            {!q && <div className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Auras in your deck ({addable.length})</div>}
+            {addable.slice(0, 80).map((a) => (
               <button key={a.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { addToHand(a.id); setQ(""); if (searchRef.current) searchRef.current.focus(); }} className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
                 <span className="font-semibold text-[14px] flex items-center gap-1.5" style={{ color: "#e6dfce" }}>{a.name} <ManaCost aura={a} />{!a.buff && <span className="text-[10px]" style={{ color: "#8b8778" }}>· removal</span>}</span>
                 <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(232,184,75,0.2)" }}><Plus size={16} style={{ color: "#e8b84b" }} /></span>
@@ -1138,7 +1144,7 @@ function PlayTab(p) {
             {addableSupport.length > 0 && (
               <>
                 <div className="text-[10px] uppercase tracking-wide mt-1" style={{ color: "#8b8778" }}>Other permanents</div>
-                {addableSupport.slice(0, 20).map((x) => (
+                {addableSupport.slice(0, q ? 20 : 80).map((x) => (
                   <button key={x.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { addToHand(x.id); setQ(""); if (searchRef.current) searchRef.current.focus(); }}
                     className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
                     <span className="min-w-0">
@@ -1150,10 +1156,10 @@ function PlayTab(p) {
                 ))}
               </>
             )}
-            {addable.length === 0 && addableSupport.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>No match — check spelling.</div>}
+            {addable.length === 0 && addableSupport.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>{q ? "No match — check spelling." : "Everything in your deck is already in hand or on the battlefield."}</div>}
           </div>
         ) : (
-          <div className="text-[11px] mt-1.5" style={{ color: "#8b8778" }}>Type a card name, keyword, or mana value — tap a result to add it. Add all you can; the keyboard stays up.</div>
+          <div className="text-[11px] mt-1.5" style={{ color: "#8b8778" }}>Tap the box to browse every card you could add, or type a name, keyword, or mana value to narrow it. Add all you can; the list stays open.</div>
         )}
       </div>
 
@@ -1195,7 +1201,7 @@ function PlayTab(p) {
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {best.ids.map((id) => (
                     <span key={id} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold" style={{ background: "#f0ead9", color: "#221a09" }}>
-                      {byName(id)} <ManaCost aura={handAuras.find((a) => a.id === id) || byId[id]} dark />
+                      {byName(id)} <ManaCost aura={handAuras.find((a) => a.id === id) || deckAuras.find((a) => a.id === id) || byId[id]} dark />
                     </span>
                   ))}
                 </div>
@@ -1567,6 +1573,16 @@ function DeckCardRow({ card, chosen, onPick, onInfo }) {
   );
 }
 
+function BrowseToggle({ open, onToggle }) {
+  return (
+    <button onMouseDown={(e) => e.preventDefault()} onClick={onToggle}
+      className="text-[11px] font-bold rounded-md px-2 py-1 flex-shrink-0 whitespace-nowrap"
+      style={{ background: open ? "rgba(255,255,255,0.08)" : "rgba(232,184,75,0.2)", color: open ? "#cfc9ba" : "#e8b84b" }}>
+      {open ? "Hide" : "Browse"}
+    </button>
+  );
+}
+
 function Card({ children }) { return <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.09)" }}>{children}</div>; }
 function Lbl({ children, inline }) { return <div className={"text-xs font-bold uppercase tracking-wide " + (inline ? "" : "mb-2")} style={{ color: "#c79a3e" }}>{children}</div>; }
 
@@ -1895,8 +1911,10 @@ function FetchRow({ a, ev, first, onEquip, onInfo }) {
 function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduction, drawPerAuraCast, equippedIds,
   white, setWhite, other, setOther, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, resetTurn }) {
   const [q, setQ] = useState("");
+  const [browse, setBrowse] = useState(false);
   const searchRef = useRef(null);
   const total = white + other;
+  const listOpen = !!q || browse;
   const toggle = (id) => setOnBoard((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const matches = supportPool
     .filter((x) => !onBoard.has(x.id) && (!q || norm(x.name).includes(norm(q)) || norm(x.typeLine || "").includes(norm(q))))
@@ -1979,14 +1997,16 @@ function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduc
         </div>
         <div className="flex items-center gap-2 rounded-lg px-3 py-2.5" style={{ background: "rgba(0,0,0,0.35)", border: "1px solid rgba(232,184,75,0.45)" }}>
           <Search size={18} style={{ color: "#e8b84b" }} />
-          <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search your deck's creatures, enchantments…" className="bg-transparent outline-none text-base w-full" style={{ color: "#ece7db" }} />
-          {q && <button onClick={() => setQ("")}><X size={16} style={{ color: "#8b8778" }} /></button>}
+          <input ref={searchRef} value={q} onChange={(e) => setQ(e.target.value)} onFocus={() => setBrowse(true)} onClick={() => setBrowse(true)} placeholder="Type or tap to browse your deck…" className="bg-transparent outline-none text-base w-full" style={{ color: "#ece7db" }} />
+          {q && <button onMouseDown={(e) => e.preventDefault()} onClick={() => setQ("")}><X size={16} style={{ color: "#8b8778" }} /></button>}
+          {supportPool.length > 0 && <BrowseToggle open={listOpen} onToggle={() => { if (listOpen) { setBrowse(false); setQ(""); if (searchRef.current) searchRef.current.blur(); } else setBrowse(true); }} />}
         </div>
         {supportPool.length === 0 ? (
           <p className="text-[11px] mt-2" style={{ color: "#c98a8a" }}>No non-Aura cards stored yet — re-import your decklist on the Deck tab to pull them in.</p>
-        ) : q ? (
-          <div className="grid gap-1.5 mt-2">
-            {matches.slice(0, 40).map((x) => (
+        ) : listOpen ? (
+          <div className="grid gap-1.5 mt-2" style={!q ? { maxHeight: 340, overflowY: "auto", WebkitOverflowScrolling: "touch" } : undefined}>
+            {!q && <div className="text-[10px] uppercase tracking-wide" style={{ color: "#8b8778" }}>Non-Aura cards in your deck ({matches.length})</div>}
+            {matches.slice(0, q ? 40 : 100).map((x) => (
               <button key={x.id} onMouseDown={(e) => e.preventDefault()} onClick={() => { toggle(x.id); setQ(""); if (searchRef.current) searchRef.current.focus(); }}
                 className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
                 <span className="min-w-0">
@@ -1996,7 +2016,7 @@ function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduc
                 <span className="flex items-center justify-center rounded-full flex-shrink-0" style={{ width: 28, height: 28, background: "rgba(232,184,75,0.2)" }}><Plus size={16} style={{ color: "#e8b84b" }} /></span>
               </button>
             ))}
-            {matches.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>No match in your deck.</div>}
+            {matches.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>{q ? "No match in your deck." : "Everything's already on the battlefield."}</div>}
           </div>
         ) : (
           <div className="text-[11px] mt-1.5" style={{ color: "#8b8778" }}>{supportPool.length} non-Aura cards from your deck. Cards that reduce Aura costs or draw on Aura casts feed the Cast tab automatically.</div>
