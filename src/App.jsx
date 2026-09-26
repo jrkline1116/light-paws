@@ -492,7 +492,7 @@ export default function LightPawsConsole() {
         .replace(/(\s+\*[^*]*\*)+\s*$/, "")          // *F* / *E* foil markers
         .replace(/\s*\([^)]*\)\s*[\w-]*\s*$/, "")    // (SET) 123 printing
         .trim();
-      if (line) { names.push(line); qtyByKey[norm(line)] = (qtyByKey[norm(line)] || 0) + qty; }
+      if (line) { names.push(line); qtyByKey[norm(line)] = Math.max(qtyByKey[norm(line)] || 0, qty); }   // same card on two lines (e.g. commander listed in Commanders + mainboard) counts once
     });
     // look up a Scryfall card's quantity (handles "Front // Back" names requested by front face)
     const qtyOf = (c) => qtyByKey[norm(c.name)] || qtyByKey[norm((c.name || "").split(" // ")[0])] || 1;
