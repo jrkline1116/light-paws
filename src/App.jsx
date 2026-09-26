@@ -249,14 +249,16 @@ function parseFixedStat(oracle) {
 
 // Parse a non-Aura permanent for effects that matter to a Light-Paws aura deck:
 // aura cost reduction (flat or affinity) and card draw when you cast an Aura.
+const SUPPORT_V = 2;   // bump when deriveSupport's detection changes
 function deriveSupport(c) {
   const o = c.oracle_text || "";
   const lo = o.toLowerCase();
   const type = (c.type_line || "").toLowerCase();
   let flat = 0, affinity = 0, drawPerAura = 0;
-  // "Aura spells you cast cost {1} less to cast"
-  const m = lo.match(/(?:aura|enchantment) spells you cast cost \{(\d+)\} less/);
-  if (m) flat = parseInt(m[1], 10);
+  // "Aura spells…", "Aura and Equipment spells…" (Danitha), "Enchantment spells…" you cast cost {N} less
+  // — only the clause that names the spells is checked, so "Noncreature spells…" etc. don't count.
+  const m = lo.match(/(?:^|[.\n])\s*([^.\n]*?)spells you cast cost \{(\d+)\} less/);
+  if (m && /\b(aura|enchantment)/.test(m[1]) && !/\bnon-?(aura|enchantment)/.test(m[1])) flat = parseInt(m[2], 10);
   // "have affinity for Auras" → {1} less per Aura you control
   if (/affinity for auras/.test(lo)) affinity = 1;
   // draw when you cast an aura / enchantment
@@ -472,6 +474,33 @@ export default function LightPawsConsole() {
     return (activeDeck.auras || []).map((a) => builtinByName[norm(a.name)] || a);
   }, [activeDeck, builtinByName]);
   const supportPool = useMemo(() => (activeDeck ? activeDeck.support || [] : []), [activeDeck]);
+  // Decks saved before a detection fix: quietly re-derive their non-Aura cards from Scryfall once.
+  useEffect(() => {
+    if (!activeDeck || activeDeck.supportV === SUPPORT_V) return;
+    const sup = activeDeck.support || [];
+    const deckId = activeDeck.id;
+    if (!sup.length) { setDecks((prev) => prev.map((d) => (d.id === deckId ? { ...d, supportV: SUPPORT_V } : d))); return; }
+    let ok = true;
+    (async () => {
+      const fresh = {};
+      for (let i = 0; i < sup.length; i += 75) {
+        const chunk = sup.slice(i, i + 75);
+        try {
+          const r = await fetch("https://api.scryfall.com/cards/collection", {
+            method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ identifiers: chunk.map((x) => ({ name: x.name })) }),
+          });
+          if (!r.ok) return;                         // try again next load
+          const d = await r.json();
+          (d.data || []).forEach((c) => { const x = deriveSupport(c); fresh[x.id] = x; });
+        } catch { return; }                          // offline — try again next load
+      }
+      if (!ok) return;
+      setDecks((prev) => prev.map((d) => (d.id !== deckId ? d
+        : { ...d, supportV: SUPPORT_V, support: (d.support || []).map((x) => (fresh[x.id] ? { ...x, ...fresh[x.id] } : x)) })));
+    })();
+    return () => { ok = false; };
+  }, [activeDeck && activeDeck.id, activeDeck && activeDeck.supportV]);
   // name lookup that knows about imported cards (ids like "imp_…"), falling back to the built-in library
   const nameOf = (id) => { const c = deckAuras.find((x) => x.id === id) || supportPool.find((x) => x.id === id); return c ? c.name : byName(id); };
 
@@ -538,6 +567,7 @@ export default function LightPawsConsole() {
         name: name || "Untitled deck",
         auras: built.auras, support: built.support, all: built.all,
         count: built.all.reduce((n, c) => n + (c.qty || 1), 0),
+        supportV: SUPPORT_V,
       };
       setDecks((prev) => {
         const without = prev.filter((d) => d.id !== deckObj.id);
@@ -1065,6 +1095,8 @@ function PlayTab(p) {
   const searchRef = useRef(null);
   const total = white + other;
   const listOpen = !!q || browse;
+  const boxRef = useRef(null);
+  useOutsideClose(boxRef, listOpen, () => { setBrowse(false); setQ(""); if (searchRef.current) searchRef.current.blur(); });
 
   const addable = deckAuras
     .filter((a) => !hand.has(a.id) && !equipped.has(a.id) && auraMatchesText(a, q))
@@ -1121,7 +1153,7 @@ function PlayTab(p) {
       </div>
 
       {/* PROMINENT add-to-hand search — always visible */}
-      <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(232,184,75,0.09)", border: "1.5px solid rgba(232,184,75,0.55)" }}>
+      <div ref={boxRef} className="rounded-xl p-3 mb-3" style={{ background: "rgba(232,184,75,0.09)", border: "1.5px solid rgba(232,184,75,0.55)" }}>
         <div className="flex items-center gap-1.5 mb-2">
           <Plus size={14} style={{ color: "#e8b84b" }} />
           <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>Add the auras you're holding</span>
@@ -1159,7 +1191,7 @@ function PlayTab(p) {
             {addable.length === 0 && addableSupport.length === 0 && <div className="text-sm italic py-2 text-center" style={{ color: "#6f6a5d" }}>{q ? "No match — check spelling." : "Everything in your deck is already in hand or on the battlefield."}</div>}
           </div>
         ) : (
-          <div className="text-[11px] mt-1.5" style={{ color: "#8b8778" }}>Tap the box to browse every card you could add, or type a name, keyword, or mana value to narrow it. Add all you can; the list stays open.</div>
+          <div className="text-[11px] mt-1.5" style={{ color: "#8b8778" }}>Tap the box to browse every card you could add, or type a name, keyword, or mana value to narrow it. Add all you can; tap outside to close.</div>
         )}
       </div>
 
@@ -1573,6 +1605,17 @@ function DeckCardRow({ card, chosen, onPick, onInfo }) {
   );
 }
 
+// Close a dropdown when the user taps/clicks anywhere outside `ref`.
+function useOutsideClose(ref, open, onClose) {
+  useEffect(() => {
+    if (!open) return;
+    const h = (e) => { if (ref.current && !ref.current.contains(e.target)) onClose(); };
+    document.addEventListener("pointerdown", h);
+    document.addEventListener("touchstart", h, { passive: true });
+    return () => { document.removeEventListener("pointerdown", h); document.removeEventListener("touchstart", h); };
+  }, [open]);
+}
+
 function BrowseToggle({ open, onToggle }) {
   return (
     <button onMouseDown={(e) => e.preventDefault()} onClick={onToggle}
@@ -1915,6 +1958,8 @@ function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduc
   const searchRef = useRef(null);
   const total = white + other;
   const listOpen = !!q || browse;
+  const boxRef = useRef(null);
+  useOutsideClose(boxRef, listOpen, () => { setBrowse(false); setQ(""); if (searchRef.current) searchRef.current.blur(); });
   const toggle = (id) => setOnBoard((s) => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const matches = supportPool
     .filter((x) => !onBoard.has(x.id) && (!q || norm(x.name).includes(norm(q)) || norm(x.typeLine || "").includes(norm(q))))
@@ -1990,7 +2035,7 @@ function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduc
       </div>
 
       {/* add from deck */}
-      <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(232,184,75,0.09)", border: "1.5px solid rgba(232,184,75,0.55)" }}>
+      <div ref={boxRef} className="rounded-xl p-3 mb-3" style={{ background: "rgba(232,184,75,0.09)", border: "1.5px solid rgba(232,184,75,0.55)" }}>
         <div className="flex items-center gap-1.5 mb-2">
           <Plus size={14} style={{ color: "#e8b84b" }} />
           <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>Add a permanent you control</span>
