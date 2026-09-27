@@ -2293,13 +2293,7 @@ function AdBanner() {
   useEffect(() => {
     if (AD_CLIENT) { try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch {} }
   }, []);
-  if (!AD_CLIENT) {
-    return (
-      <div className="rounded-lg text-center text-[11px] py-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.15)", color: "#5f5a4e" }}>
-        Ad space
-      </div>
-    );
-  }
+  if (!AD_CLIENT) return null;   // nothing renders until AD_CLIENT is set
   return (
     <ins className="adsbygoogle" style={{ display: "block" }} data-ad-client={AD_CLIENT} data-ad-slot={AD_SLOT} data-ad-format="horizontal" data-full-width-responsive="true" />
   );
@@ -2547,7 +2541,7 @@ function TabFooter() {
     <div className="px-3 pt-3 pb-6">
       <AdBanner />
       {DONATE_URL && (
-        <div className="flex justify-center mt-3">
+        <div className={"flex justify-center" + (AD_CLIENT ? " mt-3" : "")}>
           <a href={DONATE_URL} target="_blank" rel="noopener noreferrer" onClick={() => track("click/support")}
             className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-4 py-2"
             style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
