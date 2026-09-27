@@ -9,7 +9,7 @@ import {
    CONFIG — fill these in, then rebuild. Leave "" to hide.
    ============================================================ */
 const DONATE_URL = "https://buymeacoffee.com/jrkline1116";   // e.g. "https://ko-fi.com/yourname"
-const FEEDBACK_URL = "";      // Google Form link — the Feedback button appears once this is set
+const FEEDBACK_URL = "https://forms.gle/ESrGxf4UJ7nFg9Nm9";      // Google Form link — the Feedback button appears once this is set
 const GOATCOUNTER_CODE = "lightpaws";  // GoatCounter site code, e.g. "lightpaws" — analytics turn on once this is set
 
 /* ---- privacy-friendly analytics (GoatCounter: no cookies, no personal data) ---- */
