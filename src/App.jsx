@@ -1,8 +1,8 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import React, { useState, useMemo, useEffect, useRef, useLayoutEffect } from "react";
 import {
   Feather, Sword, Swords, Eye, EyeOff, Heart, ShieldCheck, ShieldHalf, Gem, Umbrella,
   Sparkles, Search, Upload, Layers, Database, Plus, Minus, X, Star, RotateCcw, Check, Lock, Filter, Wand2, ChevronsRight,
-  HelpCircle, MessageSquare, Settings, Download, Trash2, ChevronDown, ChevronRight, Info, BarChart3, FileUp, Copy,
+  HelpCircle, MessageSquare, Settings, Download, Trash2, ChevronDown, ChevronRight, ChevronLeft, Info, BarChart3, FileUp, Copy,
 } from "lucide-react";
 
 /* ============================================================
@@ -12,7 +12,7 @@ const DONATE_URL = "https://buymeacoffee.com/jrkline1116";   // e.g. "https://ko
 const FEEDBACK_URL = "https://forms.gle/ESrGxf4UJ7nFg9Nm9";      // Google Form link — the Feedback button appears once this is set
 const GOATCOUNTER_CODE = "lightpaws";  // GoatCounter site code, e.g. "lightpaws" — analytics turn on once this is set
 const SITE_URL = "https://lightpaws.app/";
-const APP_VERSION = "2026.09.27";
+const APP_VERSION = "2026.09.27.2";
 
 /* ---- privacy-friendly analytics (GoatCounter: no cookies, no personal data) ---- */
 // Opt-out uses GoatCounter's own "skipgc" flag, so count.js honors it too.
@@ -36,7 +36,7 @@ function track(name) {
 
 /* ---- first-run guided tour ---- */
 const TOUR_STEPS = [
-  { tab: 4, title: "Deck — start here", body: "Paste a deck link from Archidekt, Moxfield or MTGGoldfish (or the full list). Tap View list on a saved deck to see every card and set the printings you own." },
+  { tab: 4, title: "Deck — start here", body: "Paste a deck link from Archidekt, Moxfield or MTGGoldfish (or the full list). Tap View list on a saved deck to see every card. Tap a card, then swipe left or right to pick the printing you own." },
   { tab: 1, title: "Cast — your hand", body: "Add the cards you're holding (tap the box to browse) and set your mana. You'll get the best play for that mana, and can cast right from here." },
   { tab: 2, title: "Fetch — Light-Paws' tutor", body: "After you cast an Aura, pick its mana value to see every Aura you can fetch, ranked best-first. One tap adds it." },
   { tab: 3, title: "Board — everything else", body: "Your mana and the other permanents you control. Cost reducers like Danitha and draw engines feed the Cast tab automatically." },
@@ -453,6 +453,12 @@ export default function LightPawsConsole() {
   useEffect(() => { LS.set("protchoice", protChoice); }, [protChoice]);
   const setProt = (id, color) => setProtChoice((p) => ({ ...p, [id]: color }));
   const openInfo = (aura) => setInfoCard(aura);
+  // Long-pressing a card image shouldn't pop the browser's "open / save image" menu.
+  useEffect(() => {
+    const h = (e) => { if (e.target && e.target.tagName === "IMG") e.preventDefault(); };
+    document.addEventListener("contextmenu", h);
+    return () => document.removeEventListener("contextmenu", h);
+  }, []);
   const choosePrint = (name, pr) => setChosenPrints((p) => ({ ...p, [name]: pr }));
 
   // save on change
@@ -945,7 +951,8 @@ export default function LightPawsConsole() {
           weights={weights} setWeights={setWeights}
           onTour={() => { setSettingsOpen(null); startTour(); }} />
       )}
-      {infoCard && <CardInfoModal aura={infoCard} chosenPrint={chosenPrints[infoCard.name]} onClose={() => setInfoCard(null)} />}
+      {infoCard && <CardInfoModal aura={infoCard} chosenPrint={chosenPrints[infoCard.name]} onClose={() => setInfoCard(null)}
+        onChangePrint={() => { const n = infoCard.name; setInfoCard(null); setPickCard({ name: n }); }} />}
       {protPrompt && (
         <div onClick={() => setProtPrompt(null)} className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(0,0,0,0.65)" }}>
           <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl p-5" style={{ background: "#1a1e2b", border: "1px solid rgba(147,199,230,0.5)" }}>
@@ -977,7 +984,7 @@ export default function LightPawsConsole() {
           </div>
         </div>
       )}
-      {pickCard && <PrintingPicker card={pickCard} chosen={chosenPrints[pickCard.name]} onPick={(pr) => { choosePrint(pickCard.name, pr); setPickCard(null); }} onClose={() => setPickCard(null)} />}
+      {pickCard && <CardViewer card={pickCard} chosen={chosenPrints[pickCard.name]} onChoose={(pr) => { choosePrint(pickCard.name, pr); track("printing/choose"); }} onClose={() => setPickCard(null)} />}
     </div>
   );
 }
@@ -1593,7 +1600,7 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
           })}
         </div>
       )}
-      <p className="text-[11px] mb-6" style={{ color: "#6f6a5d" }}>Tap a deck's name to play it. View list shows every card without switching decks, and lets you set which printings you own.</p>
+      <p className="text-[11px] mb-6" style={{ color: "#6f6a5d" }}>Tap a deck's name to play it. View list shows every card without switching decks. Tap a card there and swipe to pick the printing you own.</p>
     </div>
   );
 }
@@ -1647,14 +1654,13 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
 
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-lg mx-auto px-3 pt-3 pb-8">
-          <p className="text-[11px] mb-3" style={{ color: "#8b8778" }}>Tap a card to choose the printing you own. Press and hold for the full card.</p>
+          <p className="text-[11px] mb-3" style={{ color: "#8b8778" }}>Tap a card to see it full size, then swipe left or right through its printings to pick the one you own.</p>
           {grouped.map(([g, list]) => (
             <div key={g} className="mb-3">
               <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: "#c79a3e" }}>{g} ({list.length})</div>
               <div className="grid gap-1.5">
                 {list.map((c) => (
-                  <DeckCardRow key={c.name} card={c} chosen={chosenPrints[c.name]} onPick={() => onPick({ name: c.name })}
-                    onInfo={() => openInfoCard({ name: c.name, cost: { c: 0, w: 0 }, kw: [], note: c.typeLine })} />
+                  <DeckCardRow key={c.name} card={c} chosen={chosenPrints[c.name]} onOpen={() => onPick({ name: c.name })} />
                 ))}
               </div>
             </div>
@@ -1677,20 +1683,19 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
   );
 }
 
-function DeckCardRow({ card, chosen, onPick, onInfo }) {
-  const h = useTapHold(onPick, onInfo);
+function DeckCardRow({ card, chosen, onOpen }) {
   return (
-    <div {...h} className="rounded-lg px-3 py-2"
-      style={{ background: "rgba(255,255,255,0.04)", border: chosen ? "1px solid rgba(232,184,75,0.6)" : "1px solid rgba(255,255,255,0.08)", cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
+    <button onClick={onOpen} className="w-full text-left rounded-lg px-3 py-2"
+      style={{ background: "rgba(255,255,255,0.04)", border: chosen ? "1px solid rgba(232,184,75,0.6)" : "1px solid rgba(255,255,255,0.08)" }}>
       <div className="flex items-center justify-between gap-2">
         <span className="font-semibold text-[14px]" style={{ color: "#f0ead9" }}>{card.qty > 1 && <span style={{ color: "#e8b84b" }}>{card.qty}× </span>}{card.name}</span>
         <ScryCost cost={card.manaCost} />
       </div>
       <div className="text-[10.5px] mt-0.5" style={{ color: "#8b8778" }}>{card.typeLine}</div>
       <div className="text-[10px] mt-1 font-semibold" style={{ color: chosen ? "#e8b84b" : "#6f6a5d" }}>
-        {chosen ? `✓ ${(chosen.setName || (chosen.set || "").toUpperCase())} #${chosen.collector}` : "Tap to choose your printing →"}
+        {chosen ? `✓ ${(chosen.setName || (chosen.set || "").toUpperCase())} #${chosen.collector}` : "Tap to choose your printing"}
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -1861,7 +1866,7 @@ function EquipRow({ aura, ctx, onEquip, onInfo }) {
   );
 }
 
-function CardInfoModal({ aura, chosenPrint, onClose }) {
+function CardInfoModal({ aura, chosenPrint, onClose, onChangePrint }) {
   const [data, setData] = useState(null);
   const [state, setState] = useState("loading");
   useEffect(() => {
@@ -1885,7 +1890,13 @@ function CardInfoModal({ aura, chosenPrint, onClose }) {
           <div className="font-bold text-lg" style={{ color: "#f0ead9" }}>{aura.name}</div>
           <button onClick={onClose} className="p-1 rounded flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}><X size={18} style={{ color: "#cfc9ba" }} /></button>
         </div>
-        {img && <img src={img} alt={aura.name} className="w-full rounded-xl mb-3" />}
+        {img && <img src={img} alt={aura.name} draggable={false} className="w-full rounded-xl mb-3 card-img" />}
+        {onChangePrint && (
+          <button onClick={onChangePrint} className="w-full inline-flex items-center justify-center gap-1.5 text-[12px] font-bold rounded-lg py-2 mb-3"
+            style={{ background: "rgba(232,184,75,0.16)", color: "#e8b84b" }}>
+            <Layers size={13} /> Change printing
+          </button>
+        )}
         <div className="flex items-center flex-wrap gap-2 mb-2">
           <ManaCost aura={aura} />
           {fixedStat && <span className="text-sm font-bold" style={{ color: "#cfc9ba" }}>{fixedStat}</span>}
@@ -1908,9 +1919,16 @@ function CardInfoModal({ aura, chosenPrint, onClose }) {
   );
 }
 
-function PrintingPicker({ card, chosen, onPick, onClose }) {
+// Full-screen card view: swipe left/right through every paper printing, tap "Use this printing" to keep it.
+function CardViewer({ card, chosen, onChoose, onClose }) {
   const [prints, setPrints] = useState(null);
   const [state, setState] = useState("loading");
+  const [idx, setIdx] = useState(0);
+  const [loaded, setLoaded] = useState(() => new Set([0, 1, 2]));
+  const [hintSeen, setHintSeen] = useState(() => LS.get("swipeHintSeen", false));
+  const railRef = useRef(null);
+  const startIdx = useRef(0);
+
   useEffect(() => {
     let ok = true; setState("loading");
     const base = card.prints_search_uri || ("https://api.scryfall.com/cards/search?order=released&unique=prints&q=" + encodeURIComponent('!"' + card.name + '"'));
@@ -1925,39 +1943,131 @@ function PrintingPicker({ card, chosen, onPick, onClose }) {
           u = d.has_more ? d.next_page : null; pages++;
           if (u) await new Promise((res) => setTimeout(res, 90));
         }
-        if (ok) { setPrints(all); setState("ok"); }
+        const paper = all.filter((c) => !c.digital);     // Arena/MTGO-only printings can't be in your paper deck
+        const list = paper.length ? paper : all;
+        if (ok) { setPrints(list); setState(list.length ? "ok" : "err"); }
       } catch { if (ok) setState("err"); }
     })();
     return () => { ok = false; };
   }, [card]);
+
+  // open on the printing you already chose
+  useLayoutEffect(() => {
+    if (!prints || !railRef.current) return;
+    const i = chosen ? Math.max(0, prints.findIndex((c) => c.set === chosen.set && c.collector_number === chosen.collector)) : 0;
+    startIdx.current = i;
+    railRef.current.scrollLeft = i * railRef.current.clientWidth;
+    setIdx(i); setLoaded(new Set([i - 1, i, i + 1, i + 2]));
+  }, [prints]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") onClose();
+      else if (e.key === "ArrowRight") go(1);
+      else if (e.key === "ArrowLeft") go(-1);
+    };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  });
+
+  const onScroll = () => {
+    const el = railRef.current; if (!el || !el.clientWidth) return;
+    const i = Math.round(el.scrollLeft / el.clientWidth);
+    if (i === idx) return;
+    setIdx(i);
+    setLoaded((s) => { const n = new Set(s); [i - 1, i, i + 1, i + 2].forEach((k) => n.add(k)); return n; });
+    if (!hintSeen && i !== startIdx.current) { setHintSeen(true); LS.set("swipeHintSeen", true); }
+  };
+  const go = (d) => {
+    const el = railRef.current; if (!el || !prints) return;
+    const i = Math.min(prints.length - 1, Math.max(0, idx + d));
+    el.scrollTo({ left: i * el.clientWidth, behavior: "smooth" });
+  };
+
+  const cur = prints && prints[idx];
+  const isChosen = !!(cur && chosen && chosen.set === cur.set && chosen.collector === cur.collector_number);
+  const face = cur && (cur.oracle_text != null ? cur : (cur.card_faces && cur.card_faces[0]) || cur);
+  const many = prints && prints.length > 1;
+
   return (
-    <div onClick={onClose} className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(0,0,0,0.65)" }}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-t-2xl p-4" style={{ background: "#1a1e2b", border: "1px solid rgba(232,184,75,0.4)", maxHeight: "88vh", overflowY: "auto" }}>
-        <div className="flex items-start justify-between gap-2 mb-1">
-          <div className="font-bold text-lg" style={{ color: "#f0ead9" }}>{card.name}</div>
-          <button onClick={onClose} className="p-1 rounded flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}><X size={18} style={{ color: "#cfc9ba" }} /></button>
-        </div>
-        <p className="text-[11px] mb-3" style={{ color: "#8b8778" }}>Tap the printing you own — it becomes the art shown whenever this card comes up.</p>
-        {state === "loading" && <div className="text-sm py-6 text-center" style={{ color: "#9a9484" }}>Loading printings…</div>}
-        {state === "err" && <div className="text-sm" style={{ color: "#e6939a" }}>Couldn't load printings. Check your connection.</div>}
-        {state === "ok" && prints && (
-          <div className="grid grid-cols-3 gap-2">
-            {prints.map((c) => {
-              const sel = chosen && chosen.set === c.set && chosen.collector === c.collector_number;
-              const small = getImgSmall(c);
-              return (
-                <button key={c.id} onClick={() => onPick({ set: c.set, collector: c.collector_number, setName: c.set_name, img: getImg(c), artist: c.artist })}
-                  className="rounded-lg overflow-hidden text-left" style={{ border: sel ? "2px solid #e8b84b" : "1px solid rgba(255,255,255,0.1)" }}>
-                  {small ? <img src={small} alt={c.set_name} className="w-full" /> : <div className="w-full" style={{ paddingTop: "140%", background: "rgba(255,255,255,0.05)" }} />}
-                  <div className="px-1.5 py-1">
-                    <div className="text-[10px] font-bold truncate" style={{ color: sel ? "#e8b84b" : "#cfc9ba" }}>{(c.set || "").toUpperCase()}</div>
-                    <div className="text-[9px] truncate" style={{ color: "#8b8778" }}>#{c.collector_number}</div>
-                  </div>
-                </button>
-              );
-            })}
+    <div className="fixed inset-0 z-50 flex flex-col" role="dialog" aria-modal="true" aria-label={`${card.name} printings`}
+      style={{ ...SANS, background: "#12151f", color: "#ece7db" }}>
+      <div className="safe-top" style={{ borderBottom: "1px solid rgba(232,184,75,0.25)", background: "#161a26" }}>
+        <div className="max-w-lg mx-auto px-3 py-3 flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="font-bold text-lg leading-tight truncate" style={{ color: "#f0ead9" }}>{card.name}</div>
+            <div className="text-[11px]" style={{ color: "#8b8778" }}>
+              {state === "ok" ? (many ? `Printing ${idx + 1} of ${prints.length}` : "Only one printing") : state === "loading" ? "Loading printings…" : ""}
+            </div>
           </div>
-        )}
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}><X size={18} style={{ color: "#cfc9ba" }} /></button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-lg mx-auto pb-6">
+          {state === "loading" && <div className="text-sm py-16 text-center" style={{ color: "#9a9484" }}>Loading printings…</div>}
+          {state === "err" && <div className="text-sm px-4 py-16 text-center" style={{ color: "#e6939a" }}>Couldn't load printings from Scryfall. Check your connection and open the card again.</div>}
+
+          {state === "ok" && prints && (
+            <>
+              <div className="relative">
+                <div ref={railRef} onScroll={onScroll} className="flex overflow-x-auto no-scrollbar"
+                  style={{ scrollSnapType: "x mandatory", overscrollBehaviorX: "contain", WebkitOverflowScrolling: "touch" }}>
+                  {prints.map((c, i) => {
+                    const src = loaded.has(i) ? getImg(c) : null;
+                    return (
+                      <div key={c.id} className="flex-shrink-0 w-full flex justify-center px-10 pt-4" style={{ scrollSnapAlign: "center", scrollSnapStop: "always" }}>
+                        <div className="w-full" style={{ maxWidth: 300, aspectRatio: "488 / 680", borderRadius: "4.75% / 3.5%", overflow: "hidden", background: "rgba(255,255,255,0.05)" }}>
+                          {src && <img src={src} alt={`${c.name}, ${c.set_name}`} draggable={false} className="w-full h-full card-img" style={{ objectFit: "cover" }} />}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {many && idx > 0 && (
+                  <button onClick={() => go(-1)} aria-label="Previous printing" className="absolute left-1 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center"
+                    style={{ background: "rgba(18,21,31,0.75)", border: "1px solid rgba(255,255,255,0.12)" }}><ChevronLeft size={18} style={{ color: "#cfc9ba" }} /></button>
+                )}
+                {many && idx < prints.length - 1 && (
+                  <button onClick={() => go(1)} aria-label="Next printing" className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center"
+                    style={{ background: "rgba(18,21,31,0.75)", border: "1px solid rgba(255,255,255,0.12)" }}><ChevronRight size={18} style={{ color: "#cfc9ba" }} /></button>
+                )}
+              </div>
+
+              <div className="px-4 mt-3">
+                {many && (
+                  <div className={"text-center text-[12px] mb-2 " + (hintSeen ? "" : "swipe-hint")} style={{ color: hintSeen ? "#6f6a5d" : "#93c7e6" }}>
+                    {hintSeen ? "Swipe for other printings" : "Swipe left or right to see every printing"}
+                  </div>
+                )}
+                {cur && (
+                  <div className="text-center mb-3">
+                    <div className="text-sm font-bold" style={{ color: "#f0ead9" }}>{cur.set_name}</div>
+                    <div className="text-[11px]" style={{ color: "#8b8778" }}>
+                      {(cur.set || "").toUpperCase()} #{cur.collector_number}{cur.released_at ? `, ${cur.released_at.slice(0, 4)}` : ""}{cur.artist ? `. Illustrated by ${cur.artist}` : ""}
+                    </div>
+                  </div>
+                )}
+                {cur && (
+                  <button disabled={isChosen}
+                    onClick={() => onChoose({ set: cur.set, collector: cur.collector_number, setName: cur.set_name, img: getImg(cur), artist: cur.artist })}
+                    className="w-full text-sm font-bold rounded-lg py-2.5 inline-flex items-center justify-center gap-1.5"
+                    style={isChosen ? { background: "rgba(143,211,154,0.14)", color: "#8fd39a", border: "1px solid rgba(143,211,154,0.4)" } : { background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+                    {isChosen ? <><Check size={15} /> Your printing</> : "Use this printing"}
+                  </button>
+                )}
+                {face && (face.type_line || face.oracle_text) && (
+                  <div className="mt-4 pt-3" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                    <div className="text-[12px] mb-1" style={{ color: "#8b8778" }}>{face.type_line}</div>
+                    <div className="text-sm leading-snug whitespace-pre-line" style={{ color: "#d8d2c4" }}>{face.oracle_text}</div>
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

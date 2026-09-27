@@ -10,3 +10,13 @@ body { margin: 0; background: #0f1118; -webkit-tap-highlight-color: transparent;
   .safe-bottom { padding-bottom: max(0px, env(safe-area-inset-bottom)); }
   .safe-top { padding-top: max(0px, env(safe-area-inset-top)); }
 }
+
+/* card images: no long-press save/share menu, no drag ghost */
+img { -webkit-touch-callout: none; -webkit-user-drag: none; user-select: none; }
+
+/* printing carousel */
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+@keyframes swipe-nudge { 0%, 100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+.swipe-hint { animation: swipe-nudge 1.6s ease-in-out 0.4s 2; }
+@media (prefers-reduced-motion: reduce) { .swipe-hint { animation: none; } }
