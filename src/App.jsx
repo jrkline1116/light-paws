@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   Feather, Sword, Swords, Eye, EyeOff, Heart, ShieldCheck, ShieldHalf, Gem, Umbrella,
   Sparkles, Search, Upload, Layers, Database, Plus, Minus, X, Star, RotateCcw, Check, Lock, Filter, Wand2, ChevronsRight,
-  HelpCircle, MessageSquare,
+  HelpCircle, MessageSquare, Settings, Download, Trash2, ChevronDown, ChevronRight, Info, BarChart3, FileUp, Copy,
 } from "lucide-react";
 
 /* ============================================================
@@ -11,11 +11,16 @@ import {
 const DONATE_URL = "https://buymeacoffee.com/jrkline1116";   // e.g. "https://ko-fi.com/yourname"
 const FEEDBACK_URL = "https://forms.gle/ESrGxf4UJ7nFg9Nm9";      // Google Form link — the Feedback button appears once this is set
 const GOATCOUNTER_CODE = "lightpaws";  // GoatCounter site code, e.g. "lightpaws" — analytics turn on once this is set
+const SITE_URL = "https://lightpaws.app/";
+const APP_VERSION = "2026.09.27";
 
 /* ---- privacy-friendly analytics (GoatCounter: no cookies, no personal data) ---- */
+// Opt-out uses GoatCounter's own "skipgc" flag, so count.js honors it too.
+function analyticsOn() { try { return localStorage.getItem("skipgc") !== "t"; } catch { return true; } }
+function setAnalyticsOn(on) { try { on ? localStorage.removeItem("skipgc") : localStorage.setItem("skipgc", "t"); } catch {} }
 let _gcLoaded = false;
 function loadAnalytics() {
-  if (!GOATCOUNTER_CODE || _gcLoaded || typeof document === "undefined") return;
+  if (!GOATCOUNTER_CODE || _gcLoaded || typeof document === "undefined" || !analyticsOn()) return;
   _gcLoaded = true;
   const sc = document.createElement("script");
   sc.async = true;
@@ -25,13 +30,13 @@ function loadAnalytics() {
 }
 // Anonymous event counts (which tabs get used, import sources, tour finish/skip)
 function track(name) {
-  if (!GOATCOUNTER_CODE) return;
+  if (!GOATCOUNTER_CODE || !analyticsOn()) return;
   try { if (window.goatcounter && window.goatcounter.count) window.goatcounter.count({ path: name, title: name, event: true }); } catch {}
 }
 
 /* ---- first-run guided tour ---- */
 const TOUR_STEPS = [
-  { tab: 4, title: "Deck — start here", body: "Paste a deck link from Archidekt, Moxfield or MTGGoldfish (or the full list). The Cards tab next to it shows every card and lets you set the printings you own." },
+  { tab: 4, title: "Deck — start here", body: "Paste a deck link from Archidekt, Moxfield or MTGGoldfish (or the full list). Tap View list on a saved deck to see every card and set the printings you own." },
   { tab: 1, title: "Cast — your hand", body: "Add the cards you're holding (tap the box to browse) and set your mana. You'll get the best play for that mana, and can cast right from here." },
   { tab: 2, title: "Fetch — Light-Paws' tutor", body: "After you cast an Aura, pick its mana value to see every Aura you can fetch, ranked best-first. One tap adds it." },
   { tab: 3, title: "Board — everything else", body: "Your mana and the other permanents you control. Cost reducers like Danitha and draw engines feed the Cast tab automatically." },
@@ -408,7 +413,10 @@ export default function LightPawsConsole() {
     const t = setTimeout(() => { setTourStep(0); setTab(TOUR_STEPS[0].tab); }, 500);
     return () => clearTimeout(t);
   }, []);
-  const TAB_NAMES = ["active", "cast", "fetch", "board", "deck", "cards"];
+  const TAB_NAMES = ["active", "cast", "fetch", "board", "deck"];
+  const [settingsOpen, setSettingsOpen] = useState(null);   // null = closed, else the section to open ("weights" or true)
+  const [viewDeckId, setViewDeckId] = useState(null);       // deck whose full list is open
+  const openSettings = (section) => { setSettingsOpen(section || true); track("settings/open" + (section ? "/" + section : "")); };
   useEffect(() => { track("tab/" + TAB_NAMES[tab]); }, [tab]);
   const startTour = () => { setTourStep(0); setTab(TOUR_STEPS[0].tab); track("tour/replay"); };
   const endTour = (how) => {
@@ -855,7 +863,7 @@ export default function LightPawsConsole() {
     const dx = e.changedTouches[0].clientX - touch.current.x;
     const dy = e.changedTouches[0].clientY - touch.current.y;
     if (Math.abs(dx) > 65 && Math.abs(dx) > Math.abs(dy) * 1.6) {
-      setTab((t) => Math.min(5, Math.max(0, t + (dx < 0 ? 1 : -1))));
+      setTab((t) => Math.min(4, Math.max(0, t + (dx < 0 ? 1 : -1))));
     }
   };
 
@@ -865,12 +873,12 @@ export default function LightPawsConsole() {
     { icon: Wand2, label: "Fetch" },
     { icon: Gem, label: "Board" },
     { icon: Layers, label: "Deck" },
-    { icon: Database, label: "Cards" },
   ];
 
   return (
     <div className="min-h-screen w-full" style={{ ...SANS, background: "radial-gradient(1200px 600px at 50% -10%, #26314d 0%, #161a26 55%, #0f1118 100%)", color: "#ece7db" }}>
       <div className="max-w-lg mx-auto pb-24" onTouchStart={onTS} onTouchEnd={onTE}>
+        <AppHeader onSettings={() => openSettings()} />
 
         {!hasDeck && tab < 4 && (
           <div className="px-3 pt-10">
@@ -888,28 +896,25 @@ export default function LightPawsConsole() {
           <BoardTab {...{ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, lethalNeed, setLethalNeed, curDS }} />
         )}
         {hasDeck && tab === 1 && (
-          <PlayTab {...{ white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName: nameOf, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard }} />
+          <PlayTab {...{ onOpenWeights: () => openSettings("weights"), white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName: nameOf, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard }} />
         )}
         {hasDeck && tab === 2 && (
-          <FetchTab {...{ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast, onAfterFetch: () => setTab(1), ctx, equippedIds, curDS, resetTurn }} />
+          <FetchTab {...{ onOpenWeights: () => openSettings("weights"), deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast, onAfterFetch: () => setTab(1), ctx, equippedIds, curDS, resetTurn }} />
         )}
         {hasDeck && tab === 3 && (
           <BoardStateTab {...{ supportPool, onBoard, setOnBoard, boardCards, costReduction, drawPerAuraCast, equippedIds,
             white, setWhite, other, setOther, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, resetTurn }} />
         )}
         {tab === 4 && (
-          <DeckTab {...{ decks, activeId, onImport: importList, importing, selectDeck, deleteDeck, renameDeck, synced: !!enriched }} />
-        )}
-        {tab === 5 && (
-          <DeckViewTab {...{ decks, activeId, onPick: setPickCard, chosenPrints, openInfoCard: openInfo }} />
+          <DeckTab {...{ decks, activeId, onImport: importList, importing, selectDeck, deleteDeck, renameDeck, synced: !!enriched, onViewList: (id) => { setViewDeckId(id); track("deck/view-list"); } }} />
         )}
 
-        <TabFooter onTour={startTour} />
+        <TabFooter />
       </div>
 
       {/* bottom tab bar */}
       <div className="fixed bottom-0 inset-x-0 z-20 border-t border-amber-900/40 backdrop-blur safe-bottom" style={{ background: "rgba(15,17,24,0.9)" }}>
-        <div className="max-w-lg mx-auto grid grid-cols-6">
+        <div className="max-w-lg mx-auto grid grid-cols-5">
           {TABS.map((t, i) => {
             const Ico = t.icon; const active = tab === i;
             return (
@@ -930,6 +935,16 @@ export default function LightPawsConsole() {
           onNext={() => tourGo(tourStep + 1)} onBack={() => tourGo(Math.max(0, tourStep - 1))} onSkip={() => endTour("skip")} />
       )}
 
+      {viewDeckId && decks.some((d) => d.id === viewDeckId) && (
+        <DeckListSheet deck={decks.find((d) => d.id === viewDeckId)} playing={viewDeckId === activeId}
+          onPlay={() => { selectDeck(viewDeckId); setViewDeckId(null); }}
+          onClose={() => setViewDeckId(null)} onPick={setPickCard} chosenPrints={chosenPrints} openInfoCard={openInfo} />
+      )}
+      {settingsOpen && (
+        <SettingsSheet initialSection={settingsOpen === true ? null : settingsOpen} onClose={() => setSettingsOpen(null)}
+          weights={weights} setWeights={setWeights}
+          onTour={() => { setSettingsOpen(null); startTour(); }} />
+      )}
       {infoCard && <CardInfoModal aura={infoCard} chosenPrint={chosenPrints[infoCard.name]} onClose={() => setInfoCard(null)} />}
       {protPrompt && (
         <div onClick={() => setProtPrompt(null)} className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(0,0,0,0.65)" }}>
@@ -1147,7 +1162,6 @@ function PlayTab(p) {
   const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard } = p;
   const [q, setQ] = useState("");
   const [browse, setBrowse] = useState(false);
-  const [showHelp, setShowHelp] = useState(false);
   const searchRef = useRef(null);
   const total = white + other;
   const listOpen = !!q || browse;
@@ -1346,12 +1360,9 @@ function PlayTab(p) {
         </>
       )}
 
-      <button onClick={() => setShowHelp((v) => !v)} className="text-xs flex items-center gap-1 mb-2" style={{ color: "#8b8778" }}>⚙ Scoring weights — tap to adjust {showHelp ? "▲" : "▼"}</button>
-      {showHelp && (
-        <div className="rounded-lg p-3 mb-4" style={{ background: "rgba(255,255,255,0.04)" }}>
-          <WeightsEditor weights={weights} setWeights={setWeights} />
-        </div>
-      )}
+      <button onClick={p.onOpenWeights} className="text-xs flex items-center gap-1 mb-4" style={{ color: "#8b8778" }}>
+        <Settings size={13} /> Adjust scoring weights
+      </button>
     </div>
   );
 }
@@ -1476,7 +1487,7 @@ function PlayRow({ aura, info, ctx, rec, onTap, removal, onInfo }) {
 }
 
 /* ====================== TAB 3 · DECK ====================== */
-function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck, renameDeck, synced }) {
+function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck, renameDeck, synced, onViewList }) {
   const [imp, setImp] = useState("");
   const [name, setName] = useState("");
   const [report, setReport] = useState(null);
@@ -1565,31 +1576,40 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
                       {on && <span style={{ color: "#e8b84b" }}> · playing now</span>}
                     </div>
                   </button>
-                  <div className="flex items-center gap-1 flex-shrink-0">
-                    <button onClick={() => { const n = prompt("Rename deck", d.name); if (n && n.trim()) renameDeck(d.id, n.trim()); }}
-                      className="text-[11px] px-2 py-1 rounded" style={{ background: "rgba(255,255,255,0.08)", color: "#cfc9ba" }}>Rename</button>
-                    <button onClick={() => { if (confirm(`Delete "${d.name}"?`)) deleteDeck(d.id); }}
-                      className="rounded px-1.5 py-1" style={{ background: "rgba(255,255,255,0.08)" }}><X size={14} style={{ color: "#c98a8a" }} /></button>
-                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 mt-2">
+                  <button onClick={() => onViewList(d.id)}
+                    className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 py-1.5 rounded-md" style={{ background: "rgba(232,184,75,0.16)", color: "#e8b84b" }}>
+                    <Layers size={13} /> View list
+                  </button>
+                  <div className="flex-1" />
+                  <button onClick={() => { const n = prompt("Rename deck", d.name); if (n && n.trim()) renameDeck(d.id, n.trim()); }}
+                    className="text-[11px] px-2 py-1.5 rounded-md" style={{ background: "rgba(255,255,255,0.08)", color: "#cfc9ba" }}>Rename</button>
+                  <button onClick={() => { if (confirm(`Delete "${d.name}"?`)) deleteDeck(d.id); }} aria-label={`Delete ${d.name}`}
+                    className="rounded-md px-1.5 py-1.5" style={{ background: "rgba(255,255,255,0.08)" }}><X size={14} style={{ color: "#c98a8a" }} /></button>
                 </div>
               </div>
             );
           })}
         </div>
       )}
-      <p className="text-[11px] mb-6" style={{ color: "#6f6a5d" }}>Tap a deck to make it the one you're playing. View all its cards — and set which printings you own — on the Cards tab.</p>
+      <p className="text-[11px] mb-6" style={{ color: "#6f6a5d" }}>Tap a deck's name to play it. View list shows every card without switching decks, and lets you set which printings you own.</p>
     </div>
   );
 }
 
-function DeckViewTab({ decks, activeId, onPick, chosenPrints, openInfoCard }) {
-  const [viewId, setViewId] = useState(activeId || (decks[0] && decks[0].id) || "");
+// Full-screen list of one deck's cards. Viewing never switches decks (switching clears the game state).
+function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, openInfoCard }) {
   const [q, setQ] = useState("");
-  const deck = decks.find((d) => d.id === (viewId || activeId)) || decks[0] || null;
-  const cards = deck ? (deck.all || []) : [];
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, []);
+  const cards = deck.all || [];
   const shown = cards.filter((c) => !q || norm(c.name).includes(norm(q)) || norm(c.typeLine || "").includes(norm(q)))
     .slice().sort((a, b) => a.name.localeCompare(b.name));
-
   const group = (c) => {
     const t = (c.typeLine || "").toLowerCase();
     if (/aura/.test(t)) return "Auras";
@@ -1602,45 +1622,57 @@ function DeckViewTab({ decks, activeId, onPick, chosenPrints, openInfoCard }) {
   const order = ["Auras", "Creatures", "Enchantments", "Artifacts", "Lands", "Other"];
   const grouped = order.map((g) => [g, shown.filter((c) => group(c) === g)]).filter(([, list]) => list.length);
 
-  if (!decks.length) {
-    return (
-      <div className="px-3 pt-4">
-        <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Cards · your deck</div>
-        <div className="rounded-xl p-4 text-center text-sm mt-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.15)", color: "#8b8778" }}>
-          Import your Light-Paws Commander deck on the Deck tab to start playing!
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="px-3 pt-4">
-      <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Cards · your deck</div>
-      <p className="text-xs mb-2" style={{ color: "#8b8778" }}>Every card in the deck. Tap one to choose the printing you own; press and hold for the full card.</p>
-
-      <select value={viewId || (deck ? deck.id : "")} onChange={(e) => setViewId(e.target.value)}
-        className="w-full rounded-lg p-2 text-sm outline-none mb-2" style={{ background: "rgba(0,0,0,0.35)", color: "#ece7db", border: "1px solid rgba(255,255,255,0.15)" }}>
-        {decks.map((d) => <option key={d.id} value={d.id}>{d.name}{d.id === activeId ? " (playing)" : ""}</option>)}
-      </select>
-
-      <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-3" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
-        <Search size={16} style={{ color: "#8b8778" }} />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter this deck…" className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
-        {q && <button onClick={() => setQ("")}><X size={15} style={{ color: "#8b8778" }} /></button>}
-      </div>
-
-      <div className="text-[11px] mb-2" style={{ color: "#8b8778" }}>{q ? `${shown.length} of ${cards.length} unique` : `${deckCount(deck)} cards · ${cards.length} unique`}</div>
-      {grouped.map(([g, list]) => (
-        <div key={g} className="mb-3">
-          <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: "#c79a3e" }}>{g} ({list.length})</div>
-          <div className="grid gap-1.5">
-            {list.map((c) => {
-              const chosen = chosenPrints[c.name];
-              return <DeckCardRow key={c.name} card={c} chosen={chosen} onPick={() => onPick({ name: c.name })} onInfo={() => openInfoCard({ name: c.name, cost: { c: 0, w: 0 }, kw: [], note: c.typeLine })} />;
-            })}
+    <div className="fixed inset-0 z-40 flex flex-col" role="dialog" aria-modal="true" aria-label={`${deck.name} card list`}
+      style={{ ...SANS, background: "#12151f", color: "#ece7db" }}>
+      <div className="safe-top" style={{ borderBottom: "1px solid rgba(232,184,75,0.25)", background: "#161a26" }}>
+        <div className="max-w-lg mx-auto px-3 pt-3 pb-3">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <div className="font-bold text-lg leading-tight truncate" style={{ color: "#f0ead9" }}>{deck.name}</div>
+              <div className="text-[11px]" style={{ color: "#8b8778" }}>
+                {q ? `${shown.length} of ${cards.length} unique` : `${deckCount(deck)} cards · ${cards.length} unique`}
+                {playing && <span style={{ color: "#e8b84b" }}> · playing now</span>}
+              </div>
+            </div>
+            <button onClick={onClose} aria-label="Close list" className="p-1.5 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}><X size={18} style={{ color: "#cfc9ba" }} /></button>
+          </div>
+          <div className="flex items-center gap-2 rounded-xl px-3 py-2 mt-2.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
+            <Search size={16} style={{ color: "#8b8778" }} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter this deck…" className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
+            {q && <button onClick={() => setQ("")} aria-label="Clear filter"><X size={15} style={{ color: "#8b8778" }} /></button>}
           </div>
         </div>
-      ))}
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-lg mx-auto px-3 pt-3 pb-8">
+          <p className="text-[11px] mb-3" style={{ color: "#8b8778" }}>Tap a card to choose the printing you own. Press and hold for the full card.</p>
+          {grouped.map(([g, list]) => (
+            <div key={g} className="mb-3">
+              <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: "#c79a3e" }}>{g} ({list.length})</div>
+              <div className="grid gap-1.5">
+                {list.map((c) => (
+                  <DeckCardRow key={c.name} card={c} chosen={chosenPrints[c.name]} onPick={() => onPick({ name: c.name })}
+                    onInfo={() => openInfoCard({ name: c.name, cost: { c: 0, w: 0 }, kw: [], note: c.typeLine })} />
+                ))}
+              </div>
+            </div>
+          ))}
+          {grouped.length === 0 && <div className="text-sm italic py-6 text-center" style={{ color: "#6f6a5d" }}>No cards match "{q}".</div>}
+        </div>
+      </div>
+
+      {!playing && (
+        <div className="safe-bottom" style={{ borderTop: "1px solid rgba(255,255,255,0.08)", background: "#161a26" }}>
+          <div className="max-w-lg mx-auto px-3 py-2.5">
+            <button onClick={() => { if (confirm(`Play "${deck.name}"? This clears your current hand, attached auras and board.`)) onPlay(); }}
+              className="w-full text-sm font-bold rounded-lg py-2.5" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+              Play this deck
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -2129,10 +2161,9 @@ function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduc
 }
 
 /* ====================== TAB · FETCH (Light-Paws trigger) ====================== */
-function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv, loopActive, onBackToCast, onAfterFetch, ctx, equippedIds, curDS, resetTurn }) {
+function FetchTab({ onOpenWeights, deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv, loopActive, onBackToCast, onAfterFetch, ctx, equippedIds, curDS, resetTurn }) {
   const [q, setQ] = useState("");
   const [kwFilters, setKwFilters] = useState(() => new Set());
-  const [showHelp, setShowHelp] = useState(false);
   const cap = mv >= 5 ? 99 : mv;
 
   const inRange = deckAuras.filter((a) => !equipped.has(a.id) && !hand.has(a.id) && a.cmc <= cap);
@@ -2211,15 +2242,12 @@ function FetchTab({ deckAuras, equipped, hand, equip, valueOfAdding, curPower, c
       </div>
 
       <p className="text-[11px] mb-6" style={{ color: "#6f6a5d" }}>
-        Removal auras (Pacifism, Arrest, Reprobation…) aren't shown here — Light-Paws can only attach a fetch to itself, so those are cards you cast from hand on the Play tab.
+        Removal auras (Pacifism, Arrest, Reprobation…) aren't shown here — Light-Paws can only attach a fetch to itself, so those are cards you cast from hand on the Cast tab.
       </p>
 
-      <button onClick={() => setShowHelp((v) => !v)} className="text-xs flex items-center gap-1 mb-2" style={{ color: "#8b8778" }}>⚙ Scoring weights — tap to adjust {showHelp ? "▲" : "▼"}</button>
-      {showHelp && (
-        <div className="rounded-lg p-3 mb-4" style={{ background: "rgba(255,255,255,0.04)" }}>
-          <WeightsEditor weights={weights} setWeights={setWeights} />
-        </div>
-      )}
+      <button onClick={onOpenWeights} className="text-xs flex items-center gap-1 mb-4" style={{ color: "#8b8778" }}>
+        <Settings size={13} /> Adjust scoring weights
+      </button>
     </div>
   );
 }
@@ -2326,37 +2354,210 @@ function TourOverlay({ step, total, data, target, onNext, onBack, onSkip }) {
   );
 }
 
-function TabFooter({ onTour }) {
+function AppHeader({ onSettings }) {
+  return (
+    <div className="safe-top">
+      <div className="flex items-center justify-between px-3 pt-3">
+        <div className="text-[13px] font-bold" style={{ color: "#cfc9ba" }}>Light-Paws Companion</div>
+        <button onClick={onSettings} aria-label="Settings" className="w-9 h-9 rounded-full flex items-center justify-center"
+          style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
+          <Settings size={18} style={{ color: "#cfc9ba" }} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---- backup / restore (everything the app saves lives under the "lp_" localStorage prefix) ---- */
+const BACKUP_APP = "light-paws-companion";
+function lpKeys() {
+  const out = [];
+  try { for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k && k.startsWith("lp_")) out.push(k); } } catch {}
+  return out;
+}
+function collectBackup() {
+  const data = {};
+  lpKeys().forEach((k) => { data[k] = localStorage.getItem(k); });
+  return { app: BACKUP_APP, version: 1, exported: new Date().toISOString(), data };
+}
+function parseBackup(text) {
+  let b;
+  try { b = JSON.parse(text); } catch { throw new Error("That file isn't a Light-Paws backup (it isn't valid JSON)."); }
+  if (!b || b.app !== BACKUP_APP || !b.data || typeof b.data !== "object") throw new Error("That file isn't a Light-Paws backup.");
+  const keys = Object.keys(b.data).filter((k) => k.startsWith("lp_") && typeof b.data[k] === "string");
+  if (!keys.length) throw new Error("That backup is empty.");
+  return { ...b, keys };
+}
+function applyBackup(b) {
+  lpKeys().forEach((k) => localStorage.removeItem(k));
+  b.keys.forEach((k) => localStorage.setItem(k, b.data[k]));
+}
+function clearAllData() { lpKeys().forEach((k) => localStorage.removeItem(k)); }
+
+function SettingsSection({ title, icon: Ico, open, onToggle, children }) {
+  return (
+    <div className="rounded-xl mb-2.5" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.09)" }}>
+      <button onClick={onToggle} aria-expanded={open} className="w-full flex items-center gap-2 px-3 py-3 text-left">
+        <Ico size={16} style={{ color: "#e8b84b" }} />
+        <span className="flex-1 text-sm font-bold" style={{ color: "#f0ead9" }}>{title}</span>
+        {open ? <ChevronDown size={16} style={{ color: "#8b8778" }} /> : <ChevronRight size={16} style={{ color: "#8b8778" }} />}
+      </button>
+      {open && <div className="px-3 pb-3">{children}</div>}
+    </div>
+  );
+}
+
+function SettingRow({ icon: Ico, label, sub, onClick, href, danger }) {
+  const inner = (
+    <>
+      <Ico size={16} className="flex-shrink-0" style={{ color: danger ? "#e6939a" : "#cfc9ba" }} />
+      <span className="flex-1 min-w-0">
+        <span className="block text-sm font-semibold" style={{ color: danger ? "#e6939a" : "#ece7db" }}>{label}</span>
+        {sub && <span className="block text-[11px] leading-snug" style={{ color: "#8b8778" }}>{sub}</span>}
+      </span>
+    </>
+  );
+  const cls = "w-full flex items-center gap-2.5 rounded-lg px-2.5 py-2.5 text-left";
+  const st = { background: "rgba(255,255,255,0.04)" };
+  return href
+    ? <a href={href} target="_blank" rel="noopener noreferrer" onClick={onClick} className={cls} style={st}>{inner}</a>
+    : <button onClick={onClick} className={cls} style={st}>{inner}</button>;
+}
+
+function SettingsSheet({ initialSection, onClose, weights, setWeights, onTour }) {
+  const [open, setOpen] = useState(() => new Set(initialSection ? [initialSection] : ["help"]));
+  const toggle = (k) => setOpen((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  const [stats, setStats] = useState(analyticsOn());
+  const [msg, setMsg] = useState(null);            // { ok, text }
+  const fileRef = useRef(null);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, []);
+
+  const backupName = () => `light-paws-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  const saveBackup = async () => {
+    const text = JSON.stringify(collectBackup());
+    track("backup/save");
+    try {
+      const file = new File([text], backupName(), { type: "application/json" });
+      const touch = window.matchMedia && window.matchMedia("(pointer: coarse)").matches;
+      if (touch && navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: "Light-Paws backup" });
+        setMsg({ ok: true, text: "Backup ready. Keep the file somewhere you can reach from your other device." });
+        return;
+      }
+    } catch (e) { if (e && e.name === "AbortError") return; }
+    const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+    const a = document.createElement("a"); a.href = url; a.download = backupName();
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setMsg({ ok: true, text: `Saved ${backupName()} to your downloads.` });
+  };
+  const copyBackup = async () => {
+    try { await navigator.clipboard.writeText(JSON.stringify(collectBackup())); track("backup/copy"); setMsg({ ok: true, text: "Backup copied. Paste it into a note or email to yourself." }); }
+    catch { setMsg({ ok: false, text: "Couldn't copy on this browser. Use Save backup file instead." }); }
+  };
+  const restore = async (e) => {
+    const f = e.target.files && e.target.files[0]; e.target.value = "";
+    if (!f) return;
+    try {
+      const b = parseBackup(await f.text());
+      const when = b.exported ? new Date(b.exported).toLocaleDateString() : "an earlier date";
+      if (!confirm(`Replace everything on this device with the backup from ${when}? Your current decks and game state will be overwritten.`)) return;
+      applyBackup(b); track("backup/restore");
+      location.reload();
+    } catch (err) { setMsg({ ok: false, text: err.message || "Couldn't read that backup." }); }
+  };
+  const wipe = () => {
+    if (!confirm("Delete all your decks, printings, weights and game state on this device? Save a backup first if you might want them back.")) return;
+    clearAllData(); track("data/clear");
+    location.reload();
+  };
+  const toggleStats = () => {
+    const on = !stats; setStats(on); setAnalyticsOn(on);
+    if (on) loadAnalytics();
+  };
+
+  return (
+    <div className="fixed inset-0 z-40 flex flex-col" role="dialog" aria-modal="true" aria-label="Settings" style={{ ...SANS, background: "#12151f", color: "#ece7db" }}>
+      <div className="safe-top" style={{ borderBottom: "1px solid rgba(232,184,75,0.25)", background: "#161a26" }}>
+        <div className="max-w-lg mx-auto px-3 py-3 flex items-center justify-between">
+          <div className="font-bold text-lg" style={{ color: "#f0ead9" }}>Settings</div>
+          <button onClick={onClose} aria-label="Close settings" className="p-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.08)" }}><X size={18} style={{ color: "#cfc9ba" }} /></button>
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto">
+        <div className="max-w-lg mx-auto px-3 pt-3 pb-10">
+
+          <SettingsSection title="Help & feedback" icon={HelpCircle} open={open.has("help")} onToggle={() => toggle("help")}>
+            <div className="grid gap-1.5">
+              <SettingRow icon={HelpCircle} label="How it works" sub="Replay the quick tour of each tab" onClick={onTour} />
+              {FEEDBACK_URL && <SettingRow icon={MessageSquare} label="Send feedback" sub="Report a bug or suggest a feature" href={FEEDBACK_URL} onClick={() => track("click/feedback")} />}
+              {DONATE_URL && <SettingRow icon={Heart} label="Support this app" sub="It's free. Tips help cover the domain and hosting." href={DONATE_URL} onClick={() => track("click/support")} />}
+            </div>
+          </SettingsSection>
+
+          <SettingsSection title="Scoring weights" icon={BarChart3} open={open.has("weights")} onToggle={() => toggle("weights")}>
+            <WeightsEditor weights={weights} setWeights={setWeights} />
+          </SettingsSection>
+
+          <SettingsSection title="Your data" icon={Database} open={open.has("data")} onToggle={() => toggle("data")}>
+            <p className="text-[11px] mb-2 leading-snug" style={{ color: "#8b8778" }}>Everything is saved on this device only. Use a backup to move your decks to another phone or browser.</p>
+            <div className="grid gap-1.5">
+              <SettingRow icon={Download} label="Save backup file" sub="Decks, printings, weights and game state" onClick={saveBackup} />
+              <SettingRow icon={Copy} label="Copy backup as text" onClick={copyBackup} />
+              <SettingRow icon={FileUp} label="Restore from backup" sub="Replaces what's on this device" onClick={() => fileRef.current && fileRef.current.click()} />
+              <SettingRow icon={Trash2} label="Clear all data" sub="Start fresh on this device" onClick={wipe} danger />
+            </div>
+            <input ref={fileRef} type="file" accept="application/json,.json,.txt" onChange={restore} className="hidden" />
+            {msg && <div role="status" className="text-[11px] mt-2 leading-snug" style={{ color: msg.ok ? "#8fd39a" : "#e6939a" }}>{msg.text}</div>}
+          </SettingsSection>
+
+          <SettingsSection title="Privacy" icon={Eye} open={open.has("privacy")} onToggle={() => toggle("privacy")}>
+            <button onClick={toggleStats} role="switch" aria-checked={stats} className="w-full flex items-center gap-3 rounded-lg px-2.5 py-2.5 text-left" style={{ background: "rgba(255,255,255,0.04)" }}>
+              <span className="flex-1">
+                <span className="block text-sm font-semibold" style={{ color: "#ece7db" }}>Share anonymous usage stats</span>
+                <span className="block text-[11px] leading-snug" style={{ color: "#8b8778" }}>Counts visits and which tabs get used. No cookies, no personal data.</span>
+              </span>
+              <span className="relative flex-shrink-0 rounded-full" style={{ width: 42, height: 24, background: stats ? "#c1902f" : "rgba(255,255,255,0.15)", transition: "background 150ms" }}>
+                <span className="absolute rounded-full" style={{ top: 3, left: stats ? 21 : 3, width: 18, height: 18, background: stats ? "#221a09" : "#8b8778", transition: "left 150ms" }} />
+              </span>
+            </button>
+          </SettingsSection>
+
+          <SettingsSection title="About" icon={Info} open={open.has("about")} onToggle={() => toggle("about")}>
+            <div className="text-[12px] leading-relaxed" style={{ color: "#b7b1a2" }}>
+              <p className="mb-2">Light-Paws Companion, version {APP_VERSION}. Made by John Kline for the Light-Paws, Emperor's Voice Commander deck. <a href={SITE_URL} className="underline" style={{ color: "#e8b84b" }}>lightpaws.app</a></p>
+              <p className="mb-2">Card data and images courtesy of Scryfall.</p>
+              <p className="text-[11px]" style={{ color: "#8b8778" }}>Light-Paws Companion is unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC.</p>
+            </div>
+          </SettingsSection>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function TabFooter() {
   return (
     <div className="px-3 pt-3 pb-6">
       <AdBanner />
-      <div className="flex items-center justify-center gap-2 mt-3 flex-wrap">
-          {DONATE_URL && (
-            <a href={DONATE_URL} target="_blank" rel="noopener noreferrer" onClick={() => track("click/support")}
-              className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-4 py-2"
-              style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
-              <Heart size={14} /> Support this app
-            </a>
-          )}
-          {FEEDBACK_URL && (
-            <a href={FEEDBACK_URL} target="_blank" rel="noopener noreferrer" onClick={() => track("click/feedback")}
-              className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-4 py-2"
-              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(232,184,75,0.45)", color: "#e8b84b" }}>
-              <MessageSquare size={14} /> Feedback
-            </a>
-          )}
-          {onTour && (
-            <button onClick={onTour}
-              className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-4 py-2"
-              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#cfc9ba" }}>
-              <HelpCircle size={14} /> How it works
-            </button>
-          )}
+      {DONATE_URL && (
+        <div className="flex justify-center mt-3">
+          <a href={DONATE_URL} target="_blank" rel="noopener noreferrer" onClick={() => track("click/support")}
+            className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-4 py-2"
+            style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+            <Heart size={14} /> Support this app
+          </a>
         </div>
+      )}
       <p className="text-[10px] leading-snug text-center mt-4" style={{ color: "#5f5a4e" }}>
-        Light-Paws Console is unofficial Fan Content permitted under the Fan Content Policy.
-        Not approved/endorsed by Wizards. Portions of the materials used are property of
-        Wizards of the Coast. ©Wizards of the Coast LLC. Card data &amp; images courtesy of Scryfall.
+        Unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by Wizards.
+        Card data &amp; images courtesy of Scryfall. Help, feedback and more in Settings (gear, top right).
       </p>
     </div>
   );

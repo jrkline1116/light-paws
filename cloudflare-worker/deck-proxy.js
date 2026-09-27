@@ -1,7 +1,7 @@
 // Light-Paws deck-link proxy — Cloudflare Worker (free tier is plenty).
 // Only fetches deck data from the three supported sites, and only answers the Light-Paws app.
 const ALLOWED_TARGETS = ["archidekt.com", "api2.moxfield.com", "www.mtggoldfish.com", "mtggoldfish.com"];
-const ALLOWED_ORIGINS = ["https://jrkline1116.github.io", "http://localhost:5173", "http://localhost:4173"];
+const ALLOWED_ORIGINS = ["https://lightpaws.app", "https://www.lightpaws.app", "https://jrkline1116.github.io", "http://localhost:5173", "http://localhost:4173"];
 
 export default {
   async fetch(request) {
@@ -22,7 +22,7 @@ export default {
       return new Response("Host not allowed", { status: 403, headers: cors });
 
     const upstream = await fetch(t.toString(), {
-      headers: { "User-Agent": "LightPawsCompanion/1.0 (+https://jrkline1116.github.io/light-paws/)", Accept: "application/json, text/plain, */*" },
+      headers: { "User-Agent": "LightPawsCompanion/1.0 (+https://lightpaws.app/)", Accept: "application/json, text/plain, */*" },
       cf: { cacheTtl: 300, cacheEverything: true },
     });
     const body = await upstream.text();

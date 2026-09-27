@@ -10,9 +10,9 @@ export default defineConfig({
       registerType: "autoUpdate",
       includeAssets: ["favicon.svg", "apple-touch-icon.png"],
       manifest: {
-        name: "Light-Paws Console",
+        name: "Light-Paws Companion",
         short_name: "Light-Paws",
-        description: "Aura tracker and play optimizer for the Light-Paws Commander deck",
+        description: "Free companion app and aura tracker for the Light-Paws, Emperor's Voice Commander deck",
         theme_color: "#0f1118",
         background_color: "#0f1118",
         display: "standalone",

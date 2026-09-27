@@ -11,5 +11,5 @@ The app first tries to load deck links straight from the browser. If a site bloc
 6. Commit + push. The app now uses the proxy only when a direct request fails.
 
 The Worker only fetches from Archidekt, Moxfield and MTGGoldfish, and only answers
-requests from jrkline1116.github.io (and localhost for testing). Moxfield sits behind
+requests from lightpaws.app (plus the old jrkline1116.github.io address and localhost for testing). Moxfield sits behind
 Cloudflare bot protection and may still refuse; the app then tells the user to paste the text export.
