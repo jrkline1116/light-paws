@@ -2,12 +2,41 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   Feather, Sword, Swords, Eye, EyeOff, Heart, ShieldCheck, ShieldHalf, Gem, Umbrella,
   Sparkles, Search, Upload, Layers, Database, Plus, Minus, X, Star, RotateCcw, Check, Lock, Filter, Wand2, ChevronsRight,
+  HelpCircle, MessageSquare,
 } from "lucide-react";
 
 /* ============================================================
    CONFIG — fill these in, then rebuild. Leave "" to hide.
    ============================================================ */
 const DONATE_URL = "https://buymeacoffee.com/jrkline1116";   // e.g. "https://ko-fi.com/yourname"
+const FEEDBACK_URL = "";      // Google Form link — the Feedback button appears once this is set
+const GOATCOUNTER_CODE = "lightpaws";  // GoatCounter site code, e.g. "lightpaws" — analytics turn on once this is set
+
+/* ---- privacy-friendly analytics (GoatCounter: no cookies, no personal data) ---- */
+let _gcLoaded = false;
+function loadAnalytics() {
+  if (!GOATCOUNTER_CODE || _gcLoaded || typeof document === "undefined") return;
+  _gcLoaded = true;
+  const sc = document.createElement("script");
+  sc.async = true;
+  sc.src = "https://gc.zgo.at/count.js";
+  sc.setAttribute("data-goatcounter", `https://${GOATCOUNTER_CODE}.goatcounter.com/count`);
+  document.head.appendChild(sc);
+}
+// Anonymous event counts (which tabs get used, import sources, tour finish/skip)
+function track(name) {
+  if (!GOATCOUNTER_CODE) return;
+  try { if (window.goatcounter && window.goatcounter.count) window.goatcounter.count({ path: name, title: name, event: true }); } catch {}
+}
+
+/* ---- first-run guided tour ---- */
+const TOUR_STEPS = [
+  { tab: 4, title: "Deck — start here", body: "Paste a deck link from Archidekt, Moxfield or MTGGoldfish (or the full list). The Cards tab next to it shows every card and lets you set the printings you own." },
+  { tab: 1, title: "Cast — your hand", body: "Add the cards you're holding (tap the box to browse) and set your mana. You'll get the best play for that mana, and can cast right from here." },
+  { tab: 2, title: "Fetch — Light-Paws' tutor", body: "After you cast an Aura, pick its mana value to see every Aura you can fetch, ranked best-first. One tap adds it." },
+  { tab: 3, title: "Board — everything else", body: "Your mana and the other permanents you control. Cost reducers like Danitha and draw engines feed the Cast tab automatically." },
+  { tab: 0, title: "Active — Light-Paws right now", body: "Live power/toughness, keywords, double strike damage, protection, and how close you are to lethal." },
+];
 const AD_CLIENT  = "";   // AdSense publisher id, e.g. "ca-pub-0000000000000000"
 const AD_SLOT    = "";   // AdSense ad-unit slot id, e.g. "1234567890"
 // Optional deck-link proxy (see cloudflare-worker/README.md). Used only when a site blocks
@@ -370,6 +399,24 @@ const DEFAULT_DECK = LIBRARY.filter((a) => a.deck).map((a) => a.id);
 
 export default function LightPawsConsole() {
   const [tab, setTab] = useState(0);
+  const [tourStep, setTourStep] = useState(-1);          // -1 = tour not showing
+  const navRefs = useRef([]);
+  useEffect(() => { loadAnalytics(); }, []);
+  // first visit: open the tour once (a "?" button replays it)
+  useEffect(() => {
+    if (LS.get("tourSeen", false)) return;
+    const t = setTimeout(() => { setTourStep(0); setTab(TOUR_STEPS[0].tab); }, 500);
+    return () => clearTimeout(t);
+  }, []);
+  const TAB_NAMES = ["active", "cast", "fetch", "board", "deck", "cards"];
+  useEffect(() => { track("tab/" + TAB_NAMES[tab]); }, [tab]);
+  const startTour = () => { setTourStep(0); setTab(TOUR_STEPS[0].tab); track("tour/replay"); };
+  const endTour = (how) => {
+    setTourStep(-1); LS.set("tourSeen", true); track("tour/" + how);
+    setTab(4);
+    setTimeout(() => { const ta = document.querySelector("textarea"); if (ta && !ta.value) ta.focus(); }, 150);
+  };
+  const tourGo = (i) => { if (i >= TOUR_STEPS.length) { endTour("done"); return; } setTourStep(i); setTab(TOUR_STEPS[i].tab); };
   const [fetchMv, setFetchMv] = useState(2);          // lifted from Fetch tab so Cast can pre-set it
   const [pendingFetch, setPendingFetch] = useState(null); // {count, mv} → shows the "go to Fetch?" popup
   const [castLoop, setCastLoop] = useState(null);
@@ -830,7 +877,10 @@ export default function LightPawsConsole() {
             <div className="rounded-xl p-5 text-center" style={{ background: "rgba(232,184,75,0.10)", border: "1.5px solid rgba(232,184,75,0.5)" }}>
               <div className="text-base font-bold mb-1" style={{ color: "#e8b84b" }}>Import your Light-Paws Commander deck to start playing!</div>
               <p className="text-sm mb-3" style={{ color: "#b7b1a2" }}>Paste your decklist on the Deck tab and this app will track your auras, best plays, and fetches.</p>
-              <button onClick={() => setTab(4)} className="text-sm font-bold rounded-lg px-4 py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Go to Deck tab</button>
+              <div className="flex items-center justify-center gap-2 flex-wrap">
+                <button onClick={() => setTab(4)} className="text-sm font-bold rounded-lg px-4 py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Go to Deck tab</button>
+                <button onClick={startTour} className="text-sm font-semibold rounded-lg px-4 py-2" style={{ background: "rgba(255,255,255,0.08)", color: "#cfc9ba" }}>Show me around</button>
+              </div>
             </div>
           </div>
         )}
@@ -854,7 +904,7 @@ export default function LightPawsConsole() {
           <DeckViewTab {...{ decks, activeId, onPick: setPickCard, chosenPrints, openInfoCard: openInfo }} />
         )}
 
-        <TabFooter />
+        <TabFooter onTour={startTour} />
       </div>
 
       {/* bottom tab bar */}
@@ -863,7 +913,7 @@ export default function LightPawsConsole() {
           {TABS.map((t, i) => {
             const Ico = t.icon; const active = tab === i;
             return (
-              <button key={i} onClick={() => setTab(i)} className="flex flex-col items-center gap-0.5 py-2.5 transition"
+              <button key={i} ref={(el) => { navRefs.current[i] = el; }} onClick={() => setTab(i)} className="flex flex-col items-center gap-0.5 py-2.5 transition"
                 style={{ color: active ? "#e8b84b" : "#8b8778" }}>
                 <Ico size={20} strokeWidth={active ? 2.4 : 1.8} />
                 <span className="text-[10px] font-semibold tracking-wide">{t.label}</span>
@@ -873,6 +923,12 @@ export default function LightPawsConsole() {
           })}
         </div>
       </div>
+
+      {tourStep >= 0 && (
+        <TourOverlay step={tourStep} total={TOUR_STEPS.length} data={TOUR_STEPS[tourStep]}
+          target={navRefs.current[TOUR_STEPS[tourStep].tab]}
+          onNext={() => tourGo(tourStep + 1)} onBack={() => tourGo(Math.max(0, tourStep - 1))} onSkip={() => endTour("skip")} />
+      )}
 
       {infoCard && <CardInfoModal aura={infoCard} chosenPrint={chosenPrints[infoCard.name]} onClose={() => setInfoCard(null)} />}
       {protPrompt && (
@@ -1444,6 +1500,7 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
     const nm = name.trim() || (replaceId ? (decks.find((d) => d.id === replaceId) || {}).name : "") || fetchedName || `Deck ${decks.length + 1}`;
     const res = await onImport(text, nm, replaceId || null);
     if (res && res.error) { setLinkErr(res.error); return; }       // keep the input so it can be fixed
+    track("import/" + (site ? site.toLowerCase() : "text"));
     setReport({ ...res, site }); setImp(""); setName(""); setReplaceId("");
   };
 
@@ -2220,19 +2277,82 @@ function AdBanner() {
   );
 }
 
-function TabFooter() {
+function TourOverlay({ step, total, data, target, onNext, onBack, onSkip }) {
+  const [rect, setRect] = useState(null);
+  useEffect(() => {
+    const measure = () => { if (target) { const r = target.getBoundingClientRect(); setRect({ x: r.left, y: r.top, w: r.width, h: r.height }); } };
+    measure();
+    window.addEventListener("resize", measure);
+    const t = setTimeout(measure, 60);
+    return () => { window.removeEventListener("resize", measure); clearTimeout(t); };
+  }, [target, step]);
+  const last = step === total - 1;
+  const pad = 4;
+  const navTop = rect ? rect.y : (typeof window !== "undefined" ? window.innerHeight - 64 : 600);
+  return (
+    <div className="fixed inset-0 z-40" role="dialog" aria-modal="true" aria-label={`Tour step ${step + 1} of ${total}`}>
+      {/* click-blocker; the spotlight's huge shadow does the dimming */}
+      <div className="absolute inset-0" onClick={(e) => e.stopPropagation()} style={{ background: rect ? "transparent" : "rgba(0,0,0,0.72)" }} />
+      {rect && (
+        <div className="absolute rounded-xl pointer-events-none" style={{
+          left: rect.x - pad, top: rect.y - pad, width: rect.w + pad * 2, height: rect.h + pad * 2,
+          boxShadow: "0 0 0 9999px rgba(0,0,0,0.72), 0 0 0 2px #e8b84b, 0 0 18px rgba(232,184,75,0.7)",
+          transition: "all 220ms ease",
+        }} />
+      )}
+      <div className="absolute inset-x-0 px-3" style={{ bottom: (typeof window !== "undefined" ? window.innerHeight : 700) - navTop + 14 }}>
+        <div className="max-w-lg mx-auto rounded-2xl p-4" style={{ background: "#1a1e2b", border: "1.5px solid rgba(232,184,75,0.6)", boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }}>
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-[11px] font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>{step + 1} of {total}</span>
+            <button onClick={onSkip} className="text-[12px] font-semibold" style={{ color: "#8b8778" }}>Skip tour</button>
+          </div>
+          <div className="text-base font-bold mb-1" style={{ color: "#f0ead9" }}>{data.title}</div>
+          <p className="text-sm leading-snug" style={{ color: "#cfc9ba" }}>{data.body}</p>
+          <div className="flex items-center gap-1.5 mt-3">
+            {Array.from({ length: total }).map((_, i) => (
+              <span key={i} className="h-1.5 rounded-full" style={{ width: i === step ? 18 : 6, background: i <= step ? "#e8b84b" : "rgba(255,255,255,0.18)", transition: "all 200ms" }} />
+            ))}
+            <div className="flex-1" />
+            {step > 0 && <button onClick={onBack} className="text-sm font-semibold rounded-lg px-3 py-2" style={{ background: "rgba(255,255,255,0.08)", color: "#cfc9ba" }}>Back</button>}
+            <button onClick={onNext} className="text-sm font-bold rounded-lg px-4 py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+              {last ? "Import my deck" : "Next"}
+            </button>
+          </div>
+        </div>
+      </div>
+      {/* pointer to the highlighted tab */}
+      {rect && <div className="absolute pointer-events-none" style={{ left: rect.x + rect.w / 2 - 8, top: rect.y - 16, width: 0, height: 0, borderLeft: "8px solid transparent", borderRight: "8px solid transparent", borderTop: "9px solid rgba(232,184,75,0.9)" }} />}
+    </div>
+  );
+}
+
+function TabFooter({ onTour }) {
   return (
     <div className="px-3 pt-3 pb-6">
       <AdBanner />
-      {DONATE_URL && (
-        <div className="flex items-center justify-center mt-3">
-          <a href={DONATE_URL} target="_blank" rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-4 py-2"
-            style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
-            <Heart size={14} /> Support this app
-          </a>
+      <div className="flex items-center justify-center gap-2 mt-3 flex-wrap">
+          {DONATE_URL && (
+            <a href={DONATE_URL} target="_blank" rel="noopener noreferrer" onClick={() => track("click/support")}
+              className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-4 py-2"
+              style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+              <Heart size={14} /> Support this app
+            </a>
+          )}
+          {FEEDBACK_URL && (
+            <a href={FEEDBACK_URL} target="_blank" rel="noopener noreferrer" onClick={() => track("click/feedback")}
+              className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-4 py-2"
+              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(232,184,75,0.45)", color: "#e8b84b" }}>
+              <MessageSquare size={14} /> Feedback
+            </a>
+          )}
+          {onTour && (
+            <button onClick={onTour}
+              className="inline-flex items-center gap-1.5 text-sm font-bold rounded-full px-4 py-2"
+              style={{ background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.15)", color: "#cfc9ba" }}>
+              <HelpCircle size={14} /> How it works
+            </button>
+          )}
         </div>
-      )}
       <p className="text-[10px] leading-snug text-center mt-4" style={{ color: "#5f5a4e" }}>
         Light-Paws Console is unofficial Fan Content permitted under the Fan Content Policy.
         Not approved/endorsed by Wizards. Portions of the materials used are property of
