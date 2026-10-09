@@ -44,3 +44,5 @@ phone if it's on the same Wi-Fi (use the Network URL Vite prints).
 - `src/App.jsx` — the entire app (data, scoring, all four tabs).
 - `vite.config.js` — PWA manifest + service worker config.
 - `public/` — icons + favicon.
+
+<!-- remote push test 2026-10-09 -->
