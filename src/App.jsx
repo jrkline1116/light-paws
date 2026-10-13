@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect, useRef, useLayoutEffect } from "re
 import {
   Feather, Sword, Swords, Eye, EyeOff, Heart, ShieldCheck, ShieldHalf, Gem, Umbrella,
   Sparkles, Search, Upload, Layers, Database, Plus, Minus, X, Star, RotateCcw, Check, Lock, Filter, Wand2, ChevronsRight,
-  HelpCircle, MessageSquare, Settings, Download, Trash2, ChevronDown, ChevronRight, ChevronLeft, Info, BarChart3, FileUp, Copy,
+  HelpCircle, MessageSquare, Settings, Download, Trash2, ChevronDown, ChevronRight, ChevronLeft, Info, BarChart3, FileUp, Copy, ShoppingCart, ExternalLink,
 } from "lucide-react";
 
 /* ============================================================
@@ -12,7 +12,9 @@ const DONATE_URL = "https://buymeacoffee.com/jrkline1116";   // e.g. "https://ko
 const FEEDBACK_URL = "https://forms.gle/ESrGxf4UJ7nFg9Nm9";      // Google Form link — the Feedback button appears once this is set
 const GOATCOUNTER_CODE = "lightpaws";  // GoatCounter site code, e.g. "lightpaws" — analytics turn on once this is set
 const SITE_URL = "https://lightpaws.app/";
-const APP_VERSION = "2026.09.27.2";
+const APP_VERSION = "2026.10.12";
+// TCGplayer affiliate (Impact). Leave "" to hide every Buy button.
+const AFFILIATE_TCGPLAYER = "https://partner.tcgplayer.com/c/7855069/1780961/21018?partnerpropertyid=8916392";
 
 /* ---- privacy-friendly analytics (GoatCounter: no cookies, no personal data) ---- */
 // Opt-out uses GoatCounter's own "skipgc" flag, so count.js honors it too.
@@ -1628,6 +1630,10 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
   };
   const order = ["Auras", "Creatures", "Enchantments", "Artifacts", "Lands", "Other"];
   const grouped = order.map((g) => [g, shown.filter((c) => group(c) === g)]).filter(([, list]) => list.length);
+  const [basics, setBasics] = useState(false);
+  const have = new Set(cards.map((c) => norm(c.name)));
+  const upgrades = LIBRARY.filter((a) => a.buff && !have.has(norm(a.name)));
+  const deckBuy = cards.length ? tcgLink(tcgMassEntryUrl(cards, basics), "deck-buy") : null;
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col" role="dialog" aria-modal="true" aria-label={`${deck.name} card list`}
@@ -1666,19 +1672,53 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
             </div>
           ))}
           {grouped.length === 0 && <div className="text-sm italic py-6 text-center" style={{ color: "#6f6a5d" }}>No cards match "{q}".</div>}
+
+          {!q && upgrades.length > 0 && (
+            <div className="mt-5">
+              <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: "#c79a3e" }}>Upgrade ideas ({upgrades.length})</div>
+              <p className="text-[11px] mb-2" style={{ color: "#8b8778" }}>Light-Paws Auras this deck doesn't run yet. Tap one to see it.</p>
+              <div className="grid gap-1.5">
+                {upgrades.map((a) => (
+                  <div key={a.id} className="rounded-lg px-3 py-2 flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px dashed rgba(255,255,255,0.14)" }}>
+                    <button onClick={() => onPick({ name: a.name })} className="flex-1 min-w-0 text-left">
+                      <div className="flex items-center gap-2"><span className="font-semibold text-[14px]" style={{ color: "#f0ead9" }}>{a.name}</span><ManaCost aura={a} /></div>
+                      {a.note && <div className="text-[10.5px] mt-0.5" style={{ color: "#8b8778" }}>{a.note}</div>}
+                    </button>
+                    {AFFILIATE_TCGPLAYER && <div className="flex-shrink-0"><BuyLink compact href={tcgLink(tcgCardUrl(a.name), "upgrade")} label="Buy" sub="upgrade" /></div>}
+                  </div>
+                ))}
+              </div>
+              {AFFILIATE_TCGPLAYER && <div className="text-[10.5px] mt-1.5" style={{ color: "#8b8778" }}>Buy buttons are affiliate links that support the app.</div>}
+            </div>
+          )}
         </div>
       </div>
 
-      {!playing && (
-        <div className="safe-bottom" style={{ borderTop: "1px solid rgba(255,255,255,0.08)", background: "#161a26" }}>
-          <div className="max-w-lg mx-auto px-3 py-2.5">
+      <div className="safe-bottom" style={{ borderTop: "1px solid rgba(255,255,255,0.08)", background: "#161a26" }}>
+        <div className="max-w-lg mx-auto px-3 py-2.5">
+          {deckBuy && (
+            <div className={playing ? "" : "mb-2"}>
+              <div className="flex gap-2 items-stretch">
+                <a href={deckBuy} target="_blank" rel="sponsored noopener noreferrer" onClick={() => track("buy/deck-buy")}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 text-sm font-bold rounded-lg py-2.5"
+                  style={{ background: "rgba(147,199,230,0.14)", color: "#93c7e6", border: "1px solid rgba(147,199,230,0.35)" }}>
+                  <ShoppingCart size={15} /> Buy this deck on TCGplayer <ExternalLink size={12} />
+                </a>
+                <label className="flex items-center gap-1.5 text-[11px] px-2 rounded-lg cursor-pointer" style={{ color: "#b7b1a2", background: "rgba(255,255,255,0.05)" }}>
+                  <input type="checkbox" checked={basics} onChange={(e) => setBasics(e.target.checked)} /> Basics
+                </label>
+              </div>
+              <div className="text-[10.5px] text-center mt-1" style={{ color: "#8b8778" }}>Affiliate link: opens your whole list in TCGplayer's cart. Supports the app at no extra cost.</div>
+            </div>
+          )}
+          {!playing && (
             <button onClick={() => { if (confirm(`Play "${deck.name}"? This clears your current hand, attached auras and board.`)) onPlay(); }}
               className="w-full text-sm font-bold rounded-lg py-2.5" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
               Play this deck
             </button>
-          </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 }
@@ -1811,6 +1851,36 @@ function ManaChip({ label, value, set, gold }) {
   );
 }
 
+/* ---- TCGplayer affiliate links (opens in a new tab, always disclosed) ---- */
+function tcgLink(dest, sub) {
+  if (!AFFILIATE_TCGPLAYER) return null;
+  return AFFILIATE_TCGPLAYER + (AFFILIATE_TCGPLAYER.includes("?") ? "&" : "?")
+    + "subId1=" + encodeURIComponent(sub || "app") + "&u=" + encodeURIComponent(dest);
+}
+function tcgCardUrl(name, print) {
+  if (print && print.tcgplayer_id) return "https://www.tcgplayer.com/product/" + print.tcgplayer_id;
+  return "https://www.tcgplayer.com/search/magic/product?productLineName=magic&view=grid&q=" + encodeURIComponent(name);
+}
+const BASIC_RE = /^(snow-covered )?(plains|island|swamp|mountain|forest|wastes)$/i;
+function tcgMassEntryUrl(cards, includeBasics) {
+  const lines = cards.filter((c) => includeBasics || !BASIC_RE.test(c.name.trim()))
+    .map((c) => `${c.qty || 1} ${c.name.split(" // ")[0]}`);
+  return "https://www.tcgplayer.com/massentry?productline=Magic&c=" + encodeURIComponent(lines.join("||"));
+}
+function BuyLink({ href, label, sub, onClick, compact }) {
+  if (!href) return null;
+  return (
+    <div className={compact ? "" : "mt-2"}>
+      <a href={href} target="_blank" rel="sponsored noopener noreferrer" onClick={() => { track("buy/" + (sub || "link")); onClick && onClick(); }}
+        className={"w-full inline-flex items-center justify-center gap-1.5 font-bold rounded-lg " + (compact ? "text-[11px] px-2.5 py-1.5" : "text-sm py-2.5")}
+        style={{ background: "rgba(147,199,230,0.14)", color: "#93c7e6", border: "1px solid rgba(147,199,230,0.35)" }}>
+        <ShoppingCart size={compact ? 12 : 15} /> {label} <ExternalLink size={compact ? 10 : 12} />
+      </a>
+      {!compact && <div className="text-[10.5px] text-center mt-1" style={{ color: "#8b8778" }}>Affiliate link: buying through it supports the app at no extra cost to you.</div>}
+    </div>
+  );
+}
+
 function getImg(c) {
   if (!c) return null;
   if (c.image_uris) return c.image_uris.normal || c.image_uris.large;
@@ -1897,6 +1967,7 @@ function CardInfoModal({ aura, chosenPrint, onClose, onChangePrint }) {
             <Layers size={13} /> Change printing
           </button>
         )}
+        <div className="mb-3"><BuyLink href={tcgLink(tcgCardUrl(aura.name, data), "card-popup")} label="Buy on TCGplayer" sub="card-popup" /></div>
         <div className="flex items-center flex-wrap gap-2 mb-2">
           <ManaCost aura={aura} />
           {fixedStat && <span className="text-sm font-bold" style={{ color: "#cfc9ba" }}>{fixedStat}</span>}
@@ -2058,6 +2129,7 @@ function CardViewer({ card, chosen, onChoose, onClose }) {
                     {isChosen ? <><Check size={15} /> Your printing</> : "Use this printing"}
                   </button>
                 )}
+                {cur && <BuyLink href={tcgLink(tcgCardUrl(cur.name, cur), "card-viewer")} label="Buy this printing on TCGplayer" sub="card-viewer" />}
                 {face && (face.type_line || face.oracle_text) && (
                   <div className="mt-4 pt-3" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
                     <div className="text-[12px] mb-1" style={{ color: "#8b8778" }}>{face.type_line}</div>
@@ -2637,6 +2709,7 @@ function SettingsSheet({ initialSection, onClose, weights, setWeights, onTour })
             <div className="text-[12px] leading-relaxed" style={{ color: "#b7b1a2" }}>
               <p className="mb-2">Light-Paws Companion, version {APP_VERSION}. Made by John Kline for the Light-Paws, Emperor's Voice Commander deck. <a href={SITE_URL} className="underline" style={{ color: "#e8b84b" }}>lightpaws.app</a></p>
               <p className="mb-2">Card data and images courtesy of Scryfall.</p>
+              {AFFILIATE_TCGPLAYER && <p className="mb-2">Affiliate disclosure: Light-Paws Companion is a TCGplayer affiliate. "Buy" buttons are affiliate links, so if you buy through them the app earns a small commission at no extra cost to you. It helps keep the app free.</p>}
               <p className="text-[11px]" style={{ color: "#8b8778" }}>Light-Paws Companion is unofficial Fan Content permitted under the Fan Content Policy. Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC.</p>
             </div>
           </SettingsSection>
