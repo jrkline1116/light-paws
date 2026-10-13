@@ -1,6 +1,8 @@
-# Light-Paws Console
+# Light-Paws Companion
 
-An aura tracker + play optimizer for the Light-Paws, Emperor's Voice Commander deck.
+**Use the app: [lightpaws.app](https://lightpaws.app/)** — free, no login, works on any phone.
+
+A free companion app and aura tracker for the Light-Paws, Emperor's Voice Commander (EDH) deck in Magic: The Gathering.
 Runs as an installable web app (PWA) on your phone — home-screen icon, full-screen,
 works offline for the Board / Play / Deck tabs. State is saved between opens.
 
