@@ -1,9 +1,25 @@
 import React, { useState, useMemo, useEffect, useRef, useLayoutEffect } from "react";
 import {
-  Feather, Sword, Swords, Eye, EyeOff, Heart, ShieldCheck, ShieldHalf, Gem, Umbrella,
+  Feather, Sword, Swords, Eye, EyeOff, Heart, ShieldCheck, ShieldHalf, Gem,
   Sparkles, Search, Upload, Layers, Database, Plus, Minus, X, Star, RotateCcw, Check, Lock, Filter, Wand2, ChevronsRight,
   HelpCircle, MessageSquare, Settings, Download, Trash2, ChevronDown, ChevronRight, ChevronLeft, Info, BarChart3, FileUp, Copy, ShoppingCart, ExternalLink,
+  Skull, Pencil, Undo2, Users, Target,
 } from "lucide-react";
+
+// Breastplate icon for Totem (umbra) armor, drawn in lucide's style so it takes the same props.
+function ArmorIcon({ size = 24, strokeWidth = 2, style, className }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={strokeWidth}
+      strokeLinecap="round" strokeLinejoin="round" style={style} className={className} aria-hidden="true">
+      <path d="M7 3 4 5l1 5 3-1v11a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1V9l3 1 1-5-3-2c-1.5 1.6-8.5 1.6-10 0Z" />
+      <path d="M12 7v13" />
+      <path d="M8 13c2.5 1 5.5 1 8 0" />
+    </svg>
+  );
+}
+
+// Text colors: gold means "tap me". Static labels use the muted tone so they never look like buttons.
+const HDR = "#a39b88";
 
 /* ============================================================
    CONFIG — fill these in, then rebuild. Leave "" to hide.
@@ -12,7 +28,7 @@ const DONATE_URL = "https://buymeacoffee.com/jrkline1116";   // e.g. "https://ko
 const FEEDBACK_URL = "https://forms.gle/ESrGxf4UJ7nFg9Nm9";      // Google Form link — the Feedback button appears once this is set
 const GOATCOUNTER_CODE = "lightpaws";  // GoatCounter site code, e.g. "lightpaws" — analytics turn on once this is set
 const SITE_URL = "https://lightpaws.app/";
-const APP_VERSION = "2026.10.12";
+const APP_VERSION = "2026.10.25";
 // TCGplayer affiliate (Impact). Leave "" to hide every Buy button.
 const AFFILIATE_TCGPLAYER = "https://partner.tcgplayer.com/c/7855069/1780961/21018?partnerpropertyid=8916392";
 
@@ -38,11 +54,11 @@ function track(name) {
 
 /* ---- first-run guided tour ---- */
 const TOUR_STEPS = [
-  { tab: 4, title: "Deck — start here", body: "Paste a deck link from Archidekt, Moxfield or MTGGoldfish (or the full list). Tap View list on a saved deck to see every card. Tap a card, then swipe left or right to pick the printing you own." },
+  { tab: 4, title: "Deck — start here", body: "A sample deck is loaded so you can try everything now. Paste your own deck link from Archidekt, Moxfield or MTGGoldfish (or the full list) and your printings come with it. View list lets you add or remove cards and mark sideboard cards." },
   { tab: 1, title: "Cast — your hand", body: "Add the cards you're holding (tap the box to browse) and set your mana. You'll get the best play for that mana, and can cast right from here." },
   { tab: 2, title: "Fetch — Light-Paws' tutor", body: "After you cast an Aura, pick its mana value to see every Aura you can fetch, ranked best-first. One tap adds it." },
   { tab: 3, title: "Board — everything else", body: "Your mana and the other permanents you control. Cost reducers like Danitha and draw engines feed the Cast tab automatically." },
-  { tab: 0, title: "Active — Light-Paws right now", body: "Live power/toughness, keywords, double strike damage, protection, and how close you are to lethal." },
+  { tab: 0, title: "Active — Light-Paws right now", body: "Live power/toughness, keywords, protection and +1/+1 counters (tap the ring around Light-Paws). Track each opponent's life, split damage between them, and see what's in your graveyard." },
 ];
 const AD_CLIENT  = "";   // AdSense publisher id, e.g. "ca-pub-0000000000000000"
 const AD_SLOT    = "";   // AdSense ad-unit slot id, e.g. "1234567890"
@@ -72,7 +88,7 @@ const KW = {
   hexproof:      { label: "Hexproof",      w: 4, Icon: EyeOff },
   indestructible:{ label: "Indestructible",w: 4, Icon: Gem },
   ward:          { label: "Ward",          w: 2, Icon: ShieldCheck },
-  totemArmor:    { label: "Totem armor",   w: 3, Icon: Umbrella },
+  totemArmor:    { label: "Totem armor",   w: 3, Icon: ArmorIcon },
 };
 const KW_ORDER = Object.keys(KW);
 
@@ -118,6 +134,7 @@ const A = (id, name, c, w, o = {}) => ({
   draw: o.draw || 0, token: o.token || null, etbRemoval: !!o.etbRemoval,
   conditional: !!o.conditional, canRide: o.canRide !== false, evasion: !!o.evasion,
   buff: o.buff !== false, note: o.note || "", flash: !!o.flash, deck: !!o.deck, prot: o.prot || null,
+  toHand: !!o.toHand, recur: o.recur || "",
 });
 
 const LIBRARY = [
@@ -125,20 +142,20 @@ const LIBRARY = [
   A("cartouche","Cartouche of Solidarity",0,1,{deck:1,kw:["firstStrike"],stat:{p:1,t:1},token:"now",note:"ETB: 1/1 Warrior"}),
   A("ethereal","Ethereal Armor",0,1,{deck:1,kw:["firstStrike"],scale:"ethereal",note:"+1/+1 per enchantment you control"}),
   A("hyena","Hyena Umbra",0,1,{deck:1,kw:["firstStrike","totemArmor"],stat:{p:1,t:1}}),
-  A("raffine","Raffine's Guidance",0,1,{deck:1,stat:{p:1,t:1},note:"Recast from GY 2W"}),
-  A("sentinel","Sentinel's Eyes",0,1,{deck:1,kw:["vigilance"],stat:{p:1,t:1},note:"Escape"}),
+  A("raffine","Raffine's Guidance",0,1,{deck:1,stat:{p:1,t:1},note:"Recast from GY 2W",recur:"Cast from graveyard for {2}{W}"}),
+  A("sentinel","Sentinel's Eyes",0,1,{deck:1,kw:["vigilance"],stat:{p:1,t:1},note:"Escape",recur:"Escape: cast it from your graveyard"}),
   A("shardmage","Shardmage's Rescue",0,1,{deck:1,kw:["hexproof"],stat:{p:1,t:1},flash:1,note:"Hexproof only the turn it enters"}),
   A("glitters","All That Glitters",1,1,{deck:1,scale:"atg",note:"+1/+1 per artifact + enchantment"}),
   A("angelic","Angelic Gift",1,1,{deck:1,kw:["flying"],draw:1}),
   A("benevolent","Benevolent Blessing",1,1,{deck:1,kw:["protection"],prot:"choice",flash:1,note:"Protection: chosen color"}),
   A("dogumbra","Dog Umbra",1,1,{deck:1,kw:["totemArmor"],flash:1,note:"On an opponent: it can't attack/block"}),
   A("feather","Feather of Flight",1,1,{deck:1,kw:["flying"],stat:{p:1,t:0},draw:1,flash:1}),
-  A("gryff","Gryff's Boon",1,1,{deck:1,kw:["flying"],note:"Recast from GY 3W"}),
+  A("gryff","Gryff's Boon",1,1,{deck:1,kw:["flying"],note:"Recast from GY 3W",recur:"Cast from graveyard for {3}{W}"}),
   A("indomitable","Indomitable Will",1,1,{deck:1,stat:{p:1,t:2},flash:1}),
   A("serra","On Serra's Wings",3,1,{deck:1,kw:["flying","vigilance","lifelink"],stat:{p:1,t:1}}),
   A("pentarch","Pentarch Ward",1,1,{deck:1,kw:["protection"],prot:"choice",draw:1,note:"Protection: chosen color"}),
   A("rune","Rune of Sustenance",1,1,{deck:1,kw:["lifelink"],draw:1}),
-  A("spectral","Spectral Steel",1,1,{deck:1,stat:{p:2,t:2},note:"1W, exile from GY: return an Aura/Equipment to hand"}),
+  A("spectral","Spectral Steel",1,1,{deck:1,stat:{p:2,t:2},note:"1W, exile from GY: return an Aura/Equipment to hand",recur:"{1}{W}, exile it: return an Aura or Equipment from your graveyard to hand"}),
   A("twinblade","Twinblade Blessing",1,2,{deck:1,kw:["doubleStrike"],flash:1}),
   A("battle","Battle Mastery",2,1,{deck:1,kw:["doubleStrike"]}),
   A("chains","Chains of Custody",2,1,{deck:1,kw:["ward"],etbRemoval:1,note:"ETB: exile a nonland permanent an opponent controls"}),
@@ -177,6 +194,8 @@ const LIBRARY = [
   A("mantleancients","Mantle of the Ancients",3,2,{scale:"sage",note:"+1/+1 per Aura/Equipment attached; ETB returns Auras/Equipment from your graveyard"}),
   A("masklawgrace","Mask of Law and Grace",0,1,{kw:["protection"],note:"Protection from two colors (see card)"}),
   A("shielddutyreason","Shield of Duty and Reason",0,1,{kw:["protection"],note:"Protection from two colors (see card)"}),
+  A("spiritlink","Spirit Link",0,1,{kw:["lifelink"],note:"Whenever enchanted creature deals damage, you gain that much life"}),
+  A("spiritloop","Spirit Loop",1,1,{kw:["lifelink"],toHand:1,note:"Gain life equal to damage dealt; returns to your hand if it goes to the graveyard"}),
   A("sunbond","Sunbond",3,1,{note:"Whenever you gain life, put that many +1/+1 counters on Light-Paws (not auto-scored — use lifegain judgment)"}),
 ];
 
@@ -212,7 +231,9 @@ function archidektToText(d) {
     if (!nm) return;
     const cats = e.categories || [];
     if (cats.length && excluded.has(cats[0])) return;
-    lines.push(`${e.quantity || 1} ${nm}`);
+    const ed = e.card && e.card.edition && e.card.edition.editioncode;
+    const cn = e.card && e.card.collectorNumber;
+    lines.push(`${e.quantity || 1} ${nm}${ed ? ` (${ed})${cn ? " " + cn : ""}` : ""}`);   // keep the printing chosen on Archidekt
   });
   return { text: lines.join("\n"), name: d.name || "" };
 }
@@ -223,7 +244,11 @@ function moxfieldToText(d) {
   const lines = [];
   ["commanders", "companions", "mainboard"].forEach((k) => {
     const cards = (b[k] && b[k].cards) || {};
-    Object.values(cards).forEach((e) => { if (e && e.card && e.card.name) lines.push(`${e.quantity || 1} ${e.card.name}`); });
+    Object.values(cards).forEach((e) => {
+      if (!e || !e.card || !e.card.name) return;
+      const set = e.card.set, cn = e.card.cn;                                   // keep the printing chosen on Moxfield
+      lines.push(`${e.quantity || 1} ${e.card.name}${set ? ` (${set})${cn ? " " + cn : ""}` : ""}`);
+    });
   });
   return { text: lines.join("\n"), name: d.name || "" };
 }
@@ -322,7 +347,11 @@ function deriveAura(c) {
   const kw = new Set();
   (c.keywords || []).forEach((k) => { if (kwMap[k]) kw.add(kwMap[k]); });
   if (/protection from/.test(lo)) kw.add("protection");
-  if (/umbra armor/.test(lo)) kw.add("totemArmor");
+  if (/umbra armor|totem armor/.test(lo)) kw.add("totemArmor");
+  // Spirit Link / Spirit Loop style: "whenever enchanted creature deals damage, you gain that much life" works like lifelink
+  if (/enchanted creature deals (combat )?damage[^.]*,? you gain (that much|life equal)/.test(lo) || /enchanted creature has [^.]*lifelink/.test(lo)) kw.add("lifelink");
+  const toHand = /put into a graveyard from the battlefield, return (it|this aura|[^.]*?) to (its owner's|your) hand/.test(lo);
+  const recur = /\bescape\b/.test(lo) ? "Escape: cast it from your graveyard" : /cast [^.]*from your graveyard/.test(lo) ? "Can be cast from your graveyard" : "";
   const scaleM = o.match(/\+(\d+)\/\+(\d+) for each ([^.\n]+)/i);
   let scale = null, scaleNote = "";
   if (scaleM) {
@@ -359,7 +388,7 @@ function deriveAura(c) {
       kw: [...kw], stat, scale, draw, token, etbRemoval,
       conditional, canRide, evasion, buff, prot,
       note: scaleNote,
-      flash: /\bflash\b/.test(lo), deck: false, imported: true,
+      flash: /\bflash\b/.test(lo), deck: false, imported: true, toHand, recur,
     },
   };
 }
@@ -402,6 +431,55 @@ const LS = {
 };
 const DEFAULT_DECK = LIBRARY.filter((a) => a.deck).map((a) => a.id);
 
+/* ---- sample deck: always in the deck list and playable offline. The Auras are built in;
+   the other cards' type lines and Board effects fill in from Scryfall the first time it's online. ---- */
+const SAMPLE_ID = "sample";
+const SAMPLE_V = 1;   // bump to replace everyone's stored copy of the sample
+const LIGHT_PAWS = "Light-Paws, Emperor's Voice";
+const SAMPLE_SUPPORT = [
+  [LIGHT_PAWS], ["Danitha Capashen, Paragon", { flat: 1 }], ["Sram, Senior Edificer", { drawPerAura: 1 }],
+  ["Kor Spiritdancer", { drawPerAura: 1 }], ["Mesa Enchantress", { drawPerAura: 1 }], ["Eidolon of Countless Battles"],
+  ["Sigil of the Empty Throne"], ["Sphere of Safety"], ["Ghostly Prison"], ["Swords to Plowshares"], ["Path to Exile"],
+  ["Sol Ring"], ["Arcane Signet"], ["Mind Stone"], ["Thought Vessel"], ["Fellwar Stone"], ["Generous Gift"],
+  ["Enlightened Tutor"], ["Idyllic Tutor"], ["Heliod's Pilgrim"], ["Esper Sentinel"], ["Mother of Runes"],
+  ["Giver of Runes"], ["Teferi's Protection"], ["Flawless Maneuver"], ["Wrath of God"], ["Selfless Spirit"],
+  ["Land Tax"], ["Weathered Wayfarer"], ["Smothering Tithe"], ["Archaeomancer's Map"],
+];
+const SAMPLE_LANDS = [["Command Tower"], ["Castle Ardenvale"], ["Emeria, the Sky Ruin"], ["Kor Haven"], ["Myriad Landscape"], ["Rogue's Passage"], ["Plains", 30]];
+const costStr = (a) => (a.cost.c ? `{${a.cost.c}}` : "") + "{W}".repeat(a.cost.w);
+function makeSampleDeck() {
+  const auras = LIBRARY.filter((a) => a.deck);
+  const support = SAMPLE_SUPPORT.map(([name, o = {}]) => ({
+    id: "sup_" + norm(name), name, cost: { c: 0, w: 0 }, cmc: 0, typeLine: "",
+    flat: o.flat || 0, affinity: 0, drawPerAura: o.drawPerAura || 0, relevant: !!(o.flat || o.drawPerAura), isLand: false,
+  }));
+  const all = [
+    ...auras.map((a) => ({ name: a.name, typeLine: "Enchantment — Aura", manaCost: costStr(a), cmc: a.cmc, qty: 1 })),
+    ...SAMPLE_SUPPORT.map(([name]) => ({ name, typeLine: "", manaCost: "", cmc: 0, qty: 1 })),
+    ...SAMPLE_LANDS.map(([name, q = 1]) => ({ name, typeLine: name === "Plains" ? "Basic Land — Plains" : "", manaCost: "", cmc: 0, qty: q })),
+  ];
+  return { id: SAMPLE_ID, sample: true, sampleV: SAMPLE_V, name: "Sample deck: Light-Paws Auras", auras, support, all, out: [],
+    count: all.reduce((n, c) => n + c.qty, 0), supportV: 0 };
+}
+function withSample(list) {
+  const old = (list || []).find((d) => d.id === SAMPLE_ID);
+  return [old && old.sampleV === SAMPLE_V ? old : makeSampleDeck(), ...(list || []).filter((d) => d.id !== SAMPLE_ID)];
+}
+// cards marked "sideboard" don't count toward the deck and aren't playable
+function inDeckCount(d) { const out = new Set(d.out || []); return (d.all || []).reduce((n, c) => n + (out.has(norm(c.name)) ? 0 : (c.qty || 1)), 0); }
+const SCRY_COLLECTION = "https://api.scryfall.com/cards/collection";
+async function scryCollection(identifiers) {
+  try {
+    const r = await fetch(SCRY_COLLECTION, { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" }, body: JSON.stringify({ identifiers }) });
+    return r.ok ? await r.json() : null;
+  } catch { return null; }
+}
+const START_LIFE = 40;
+const defaultOpps = (n) => Array.from({ length: n }, (_, i) => ({ id: "o" + (i + 1), name: "Opponent " + (i + 1), life: START_LIFE, cmd: 0 }));
+// damage still needed to knock this opponent out: life, or what's left of 21 commander damage
+const oppNeed = (o) => Math.max(0, Math.min(o.life, 21 - o.cmd));
+const oppOut = (o) => o.life <= 0 || o.cmd >= 21;
+
 /* ======================================================================== */
 
 export default function LightPawsConsole() {
@@ -418,6 +496,7 @@ export default function LightPawsConsole() {
   const TAB_NAMES = ["active", "cast", "fetch", "board", "deck"];
   const [settingsOpen, setSettingsOpen] = useState(null);   // null = closed, else the section to open ("weights" or true)
   const [viewDeckId, setViewDeckId] = useState(null);       // deck whose full list is open
+  const [viewEdit, setViewEdit] = useState(false);          // open that list straight into edit mode
   const openSettings = (section) => { setSettingsOpen(section || true); track("settings/open" + (section ? "/" + section : "")); };
   useEffect(() => { track("tab/" + TAB_NAMES[tab]); }, [tab]);
   const startTour = () => { setTourStep(0); setTab(TOUR_STEPS[0].tab); track("tour/replay"); };
@@ -431,11 +510,15 @@ export default function LightPawsConsole() {
   const [pendingFetch, setPendingFetch] = useState(null); // {count, mv} → shows the "go to Fetch?" popup
   const [castLoop, setCastLoop] = useState(null);
   const [protPrompt, setProtPrompt] = useState(null); // aura needing a protection color // {remaining:[ids]} while walking a multi-aura best play
-  const [decks, setDecks] = useState(() => LS.get("decks", []));     // [{id,name,auras,support,all}]
-  const [activeId, setActiveId] = useState(() => LS.get("activeId", null));
+  const [decks, setDecks] = useState(() => withSample(LS.get("decks", [])));     // [{id,name,auras,support,all,out}]
+  const [activeId, setActiveId] = useState(() => { const id = LS.get("activeId", null); return id && LS.get("decks", []).some((d) => d.id === id) ? id : SAMPLE_ID; });
   const [equipped, setEquipped] = useState(() => new Set(LS.get("equipped", [])));
   const [manualKw, setManualKw] = useState(() => new Set(LS.get("manual", [])));
-  const [lethalNeed, setLethalNeed] = useState(() => LS.get("lethalNeed", 21));
+  const [opps, setOpps] = useState(() => { const o = LS.get("opps", null); return Array.isArray(o) && o.length ? o : defaultOpps(3); });
+  const [counters, setCounters] = useState(() => LS.get("counters", 0));     // +1/+1 counters on Light-Paws
+  const [grave, setGrave] = useState(() => LS.get("grave", []));            // Aura ids in your graveyard, newest first
+  const aliveOpps = opps.filter((o) => !oppOut(o));
+  const lethalNeed = aliveOpps.length ? Math.min(...aliveOpps.map(oppNeed)) : 0;
   const [costRed, setCostRed] = useState(() => LS.get("costRed", 0));      // flat "Auras cost {1} less" sources
   const [affinity, setAffinity] = useState(() => LS.get("affinity", 0));   // Pearl-Ear: {1} less per Aura you control
   const [white, setWhite] = useState(() => LS.get("white", 2));
@@ -468,7 +551,9 @@ export default function LightPawsConsole() {
   useEffect(() => { LS.set("activeId", activeId); }, [activeId]);
   useEffect(() => { LS.set("equipped", [...equipped]); }, [equipped]);
   useEffect(() => { LS.set("manual", [...manualKw]); }, [manualKw]);
-  useEffect(() => { LS.set("lethalNeed", lethalNeed); }, [lethalNeed]);
+  useEffect(() => { LS.set("opps", opps); }, [opps]);
+  useEffect(() => { LS.set("counters", counters); }, [counters]);
+  useEffect(() => { LS.set("grave", grave); }, [grave]);
   useEffect(() => { LS.set("costRed", costRed); }, [costRed]);
   useEffect(() => { LS.set("affinity", affinity); }, [affinity]);
   useEffect(() => { LS.set("white", white); }, [white]);
@@ -529,14 +614,36 @@ export default function LightPawsConsole() {
   const builtinByName = useMemo(() => Object.fromEntries(baseLib.map((a) => [norm(a.name), a])), [baseLib]);
 
   // ---- saved decks ----
-  const activeDeck = useMemo(() => decks.find((d) => d.id === activeId) || null, [decks, activeId]);
+  const activeDeck = useMemo(() => decks.find((d) => d.id === activeId) || decks.find((d) => d.id === SAMPLE_ID) || null, [decks, activeId]);
   const hasDeck = !!activeDeck;
-  // auras of the active deck, refreshed against the enriched built-in library where names match
+  const deckOut = useMemo(() => new Set(activeDeck ? activeDeck.out || [] : []), [activeDeck]);
+  // auras of the active deck (minus sideboard), refreshed against the enriched built-in library where names match
   const deckAuras = useMemo(() => {
     if (!activeDeck) return [];
-    return (activeDeck.auras || []).map((a) => builtinByName[norm(a.name)] || a);
-  }, [activeDeck, builtinByName]);
-  const supportPool = useMemo(() => (activeDeck ? activeDeck.support || [] : []), [activeDeck]);
+    return (activeDeck.auras || []).filter((a) => !deckOut.has(norm(a.name))).map((a) => builtinByName[norm(a.name)] || a);
+  }, [activeDeck, builtinByName, deckOut]);
+  const supportPool = useMemo(() => (activeDeck ? (activeDeck.support || []).filter((x) => !deckOut.has(norm(x.name))) : []), [activeDeck, deckOut]);
+  const graveSet = useMemo(() => new Set(grave), [grave]);
+  // Decks with cards still missing a type line (the sample, or a card added offline): fill them in from Scryfall once.
+  const filling = useRef(new Set());
+  useEffect(() => {
+    const d = decks.find((x) => !filling.current.has(x.id) && (x.all || []).some((c) => !c.typeLine));
+    if (!d) return;
+    filling.current.add(d.id);
+    const missing = d.all.filter((c) => !c.typeLine).map((c) => c.name);
+    (async () => {
+      const info = {};
+      for (let i = 0; i < missing.length; i += 75) {
+        const j = await scryCollection(missing.slice(i, i + 75).map((name) => ({ name })));
+        if (!j) return;                                  // offline: try again next load
+        (j.data || []).forEach((c) => { info[norm(c.name)] = c; info[norm(c.name.split(" // ")[0])] = c; });
+      }
+      setDecks((prev) => prev.map((x) => (x.id !== d.id ? x : { ...x, all: x.all.map((c) => {
+        const s = info[norm(c.name)];
+        return s && !c.typeLine ? { ...c, typeLine: s.type_line || "", manaCost: s.mana_cost || (s.card_faces && s.card_faces[0] ? s.card_faces[0].mana_cost : "") || "", cmc: s.cmc || 0 } : c;
+      }) })));
+    })();
+  }, [decks]);
   // Decks saved before a detection fix: quietly re-derive their non-Aura cards from Scryfall once.
   useEffect(() => {
     if (!activeDeck || activeDeck.supportV === SUPPORT_V) return;
@@ -567,10 +674,23 @@ export default function LightPawsConsole() {
   // name lookup that knows about imported cards (ids like "imp_…"), falling back to the built-in library
   const nameOf = (id) => { const c = deckAuras.find((x) => x.id === id) || supportPool.find((x) => x.id === id); return c ? c.name : byName(id); };
 
+  // Sort one Scryfall card into the deck's playable Auras or its other (Board) cards.
+  function classifyCard(c, auras, support) {
+    const builtin = builtinByName[norm(c.name)];
+    if (builtin) { auras.push(builtin); return; }           // keep hand-tuned scoring where we have it
+    const res = deriveAura(c);
+    if (res.ok) { auras.push(res.aura); return; }
+    const sup = deriveSupport(c);
+    if (!sup.isLand) support.push(sup);
+  }
+  const allEntry = (c, qty) => ({ name: c.name, typeLine: c.type_line || "", manaCost: c.mana_cost || (c.card_faces && c.card_faces[0] ? c.card_faces[0].mana_cost : "") || "", cmc: c.cmc || 0, qty });
+  const printOf = (c) => ({ set: c.set, collector: c.collector_number, setName: c.set_name, img: getImg(c), artist: c.artist, tcgplayer_id: c.tcgplayer_id });
+
   // Parse a pasted decklist into a full deck object: auras (playable), support (board), all (viewing).
+  // "1 Sol Ring (C21) 263" keeps that exact printing (Moxfield/Archidekt exports and links include it).
   async function buildDeckFromList(text) {
     const names = [];
-    const qtyByKey = {};
+    const qtyByKey = {}, printByKey = {};
     text.split("\n").forEach((raw) => {
       let line = raw.trim();
       const qm = line.match(/^(\d+)\s*x?\s+/i);
@@ -584,36 +704,51 @@ export default function LightPawsConsole() {
         .replace(/\s*\^[^^]*\^/g, "")                 // Archidekt ^color tags^
         .replace(/\s*\[[^\]]*\]/g, "")                // Archidekt [Categories]
         .replace(/(\s+\*[^*]*\*)+\s*$/, "")          // *F* / *E* foil markers
-        .replace(/\s*\([^)]*\)\s*[\w-]*\s*$/, "")    // (SET) 123 printing
         .trim();
-      if (line) { names.push(line); qtyByKey[norm(line)] = Math.max(qtyByKey[norm(line)] || 0, qty); }   // same card on two lines (e.g. commander listed in Commanders + mainboard) counts once
+      let pr = null;
+      const pm = line.match(/\s*\(([A-Za-z0-9]{2,6})\)\s*([^\s()]+)?\s*$/);   // (SET) 123 printing
+      if (pm) { pr = { set: pm[1].toLowerCase(), cn: pm[2] || null }; line = line.slice(0, pm.index); }
+      line = line.replace(/\s*\([^)]*\)\s*[\w-]*\s*$/, "").trim();         // any other trailing (…) tag
+      if (line) {
+        const k = norm(line);
+        names.push(line); qtyByKey[k] = Math.max(qtyByKey[k] || 0, qty);   // same card on two lines (e.g. commander listed in Commanders + mainboard) counts once
+        if (pr && !printByKey[k]) printByKey[k] = pr;
+      }
     });
     // look up a Scryfall card's quantity (handles "Front // Back" names requested by front face)
     const qtyOf = (c) => qtyByKey[norm(c.name)] || qtyByKey[norm((c.name || "").split(" // ")[0])] || 1;
     const uniq = [...new Map(names.map((n) => [norm(n), n])).values()];
-    const auras = [], support = [], all = [], rejected = [];
+    const auras = [], support = [], all = [], rejected = [], prints = {};
+    const prOf = (name) => printByKey[norm(name)] || printByKey[norm((name || "").split(" // ")[0])];
+    const idFor = (n) => { const pr = printByKey[norm(n)]; if (!pr) return { name: n }; return pr.cn ? { set: pr.set, collector_number: pr.cn } : { name: n, set: pr.set }; };
+    const seen = new Set();
+    const take = (c) => {
+      if (seen.has(norm(c.name))) return; seen.add(norm(c.name));
+      all.push(allEntry(c, qtyOf(c)));
+      classifyCard(c, auras, support);
+      const pr = prOf(c.name);
+      if (pr && c.set === pr.set) prints[c.name] = printOf(c);
+    };
     for (let i = 0; i < uniq.length; i += 75) {
       const chunk = uniq.slice(i, i + 75);
-      try {
-        const r = await fetch("https://api.scryfall.com/cards/collection", {
-          method: "POST", headers: { "Content-Type": "application/json", Accept: "application/json" },
-          body: JSON.stringify({ identifiers: chunk.map((n) => ({ name: n })) }),
-        });
-        if (!r.ok) { rejected.push(...chunk); continue; }
-        const d = await r.json();
-        (d.data || []).forEach((c) => {
-          all.push({ name: c.name, typeLine: c.type_line || "", manaCost: c.mana_cost || "", cmc: c.cmc || 0, qty: qtyOf(c) });
-          const builtin = builtinByName[norm(c.name)];
-          if (builtin) { auras.push(builtin); return; }           // keep hand-tuned scoring where we have it
-          const res = deriveAura(c);
-          if (res.ok) { auras.push(res.aura); return; }
-          const sup = deriveSupport(c);
-          if (!sup.isLand) support.push(sup);
-        });
-        (d.not_found || []).forEach((nf) => rejected.push((nf.name || "unknown") + " (not found)"));
-      } catch { rejected.push(...chunk); }
+      const d = await scryCollection(chunk.map(idFor));
+      if (!d) { rejected.push(...chunk); continue; }
+      (d.data || []).forEach(take);
+      // a printing Scryfall doesn't recognize falls back to the plain card name
+      const retry = [];
+      (d.not_found || []).forEach((nf) => {
+        if (nf.name && !nf.set) { rejected.push(nf.name + " (not found)"); return; }
+        const n = nf.name || chunk.find((x) => { const pr = printByKey[norm(x)]; return pr && pr.set === String(nf.set || "").toLowerCase() && pr.cn === nf.collector_number; });
+        if (n) retry.push(n); else rejected.push("unknown (not found)");
+      });
+      if (retry.length) {
+        const d2 = await scryCollection(retry.map((name) => ({ name })));
+        if (!d2) { rejected.push(...retry); continue; }
+        (d2.data || []).forEach(take);
+        (d2.not_found || []).forEach((nf) => rejected.push((nf.name || "unknown") + " (not found)"));
+      }
     }
-    return { auras, support, all, rejected };
+    return { auras, support, all, rejected, prints };
   }
 
   async function importList(text, name, replaceId) {
@@ -628,7 +763,7 @@ export default function LightPawsConsole() {
       const deckObj = {
         id: replaceId || ("deck_" + Date.now()),
         name: name || "Untitled deck",
-        auras: built.auras, support: built.support, all: built.all,
+        auras: built.auras, support: built.support, all: built.all, out: [],
         count: built.all.reduce((n, c) => n + (c.qty || 1), 0),
         supportV: SUPPORT_V,
       };
@@ -636,18 +771,62 @@ export default function LightPawsConsole() {
         const without = prev.filter((d) => d.id !== deckObj.id);
         return [...without, deckObj];
       });
+      const nPrints = Object.keys(built.prints).length;
+      if (nPrints) setChosenPrints((p) => ({ ...p, ...built.prints }));    // use the printings picked on Moxfield/Archidekt
       setActiveId(deckObj.id);
-      setEquipped(new Set()); setHand(new Set()); setOnBoard(new Set());
-      return { auras: built.auras.length, support: built.support.length, total: deckObj.count, unique: built.all.length, rejected: built.rejected };
+      clearGame();
+      return { auras: built.auras.length, support: built.support.length, total: deckObj.count, unique: built.all.length, rejected: built.rejected, prints: nPrints };
     } finally { setImporting(false); }
   }
 
+  function clearGame() { setEquipped(new Set()); setHand(new Set()); setOnBoard(new Set()); setGrave([]); setCounters(0); }
   const deleteDeck = (id) => {
+    if (id === SAMPLE_ID) return;                                    // the sample always stays
     setDecks((prev) => prev.filter((d) => d.id !== id));
-    if (activeId === id) { setActiveId(null); setEquipped(new Set()); setHand(new Set()); setOnBoard(new Set()); }
+    if (activeId === id) { setActiveId(SAMPLE_ID); clearGame(); }
   };
   const renameDeck = (id, name) => setDecks((prev) => prev.map((d) => (d.id === id ? { ...d, name } : d)));
-  const selectDeck = (id) => { setActiveId(id); setEquipped(new Set()); setHand(new Set()); setOnBoard(new Set()); };
+  const selectDeck = (id) => { setActiveId(id); clearGame(); };
+
+  // ---- edit a deck on the fly (game state is kept) ----
+  const recount = (d) => ({ ...d, count: (d.all || []).reduce((n, c) => n + (c.qty || 1), 0) });
+  const updateDeck = (id, fn) => setDecks((prev) => prev.map((d) => (d.id === id ? recount(fn(d)) : d)));
+  const setCardQty = (deckId, name, qty) => updateDeck(deckId, (d) => {
+    if (qty > 0) return { ...d, all: d.all.map((c) => (c.name === name ? { ...c, qty } : c)) };
+    const k = norm(name);
+    return { ...d, all: d.all.filter((c) => c.name !== name), auras: (d.auras || []).filter((a) => norm(a.name) !== k),
+      support: (d.support || []).filter((x) => norm(x.name) !== k), out: (d.out || []).filter((x) => x !== k) };
+  });
+  const toggleOut = (deckId, name) => updateDeck(deckId, (d) => {
+    const out = new Set(d.out || []); const k = norm(name);
+    out.has(k) ? out.delete(k) : out.add(k);
+    return { ...d, out: [...out] };
+  });
+  async function addCardByName(deckId, name) {
+    let c;
+    try {
+      const r = await fetch("https://api.scryfall.com/cards/named?exact=" + encodeURIComponent(name), { headers: { Accept: "application/json" } });
+      if (!r.ok) throw new Error();
+      c = await r.json();
+    } catch { throw new Error("Couldn't load that card from Scryfall. Check your connection."); }
+    updateDeck(deckId, (d) => {
+      const ex = (d.all || []).find((x) => norm(x.name) === norm(c.name));
+      if (ex) return { ...d, all: d.all.map((x) => (x === ex ? { ...x, qty: (x.qty || 1) + 1 } : x)) };
+      const auras = [...(d.auras || [])], support = [...(d.support || [])];
+      classifyCard(c, auras, support);
+      return { ...d, all: [...(d.all || []), allEntry(c, 1)], auras, support };
+    });
+    track("deck/add-card");
+    return c.name;
+  }
+  // The sample stays as shipped: editing it makes your own copy (and keeps the current game going)
+  const copyDeck = (id) => {
+    const src = decks.find((d) => d.id === id); if (!src) return null;
+    const nd = { ...src, id: "deck_" + Date.now(), name: src.sample ? "My Light-Paws deck" : src.name + " (copy)", sample: false, sampleV: undefined };
+    setDecks((prev) => [...prev, nd]);
+    if (activeId === id) setActiveId(nd.id);
+    return nd.id;
+  };
 
   const deckNames = useMemo(() => new Set(deckAuras.map((a) => a.name)), [deckAuras]);
   const [hand, setHand] = useState(() => new Set(LS.get("hand", [])));
@@ -686,8 +865,9 @@ export default function LightPawsConsole() {
     return { have, on, counts, addP, addT, evasive };
   }, [equipped, manualKw, deckAuras, plains, artifacts, otherEnch]);
 
-  const curPower = baseP + ctx.addP;
-  const curTough = baseT + ctx.addT;
+  const bP = baseP + counters, bT = baseT + counters;     // printed stats plus +1/+1 counters
+  const curPower = bP + ctx.addP;
+  const curTough = bT + ctx.addT;
   const curDS = ctx.have.has("doubleStrike");
   const projDmg = Math.round(curPower * (curDS ? 2 : 1) * (ctx.evasive ? 1 : W.CONNECT_GROUND));
 
@@ -716,7 +896,7 @@ export default function LightPawsConsole() {
 
     const evasive = finalHave.has("flying") || [...ctx.on, ...set].some((a) => a.evasion);
     const connect = evasive ? W.CONNECT_EVASIVE : W.CONNECT_GROUND;
-    const projPower = baseP + ctx.addP + addP;
+    const projPower = bP + ctx.addP + addP;
 
     let kwScore = 0; const gainedKw = [];
     KW_ORDER.forEach((k) => {
@@ -745,7 +925,7 @@ export default function LightPawsConsole() {
     // threshold is what YOU need to connect for, and the player decides if it gets through.
     const finalDS = finalHave.has("doubleStrike");
     const swing = projPower * (finalDS ? 2 : 1);
-    const wasLethal = (baseP + ctx.addP) * (hasKw(before, "doubleStrike") ? 2 : 1) >= lethalNeed;
+    const wasLethal = (bP + ctx.addP) * (hasKw(before, "doubleStrike") ? 2 : 1) >= lethalNeed;
     const lethalScore = (!wasLethal && lethalNeed > 0 && swing >= lethalNeed) ? W.LETHAL_BONUS : 0;
     if (lethalScore) gainedKw.push(`LETHAL (${swing})`);
 
@@ -772,7 +952,7 @@ export default function LightPawsConsole() {
       m[a.id] = { onBoard, affordable, marginal, redundant };
     });
     return m;
-  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed, costRed, affinity, onBoard, supportPool]);
+  }, [handAuras, equipped, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, counters, weights, lethalNeed, costRed, affinity, onBoard, supportPool]);
 
   // value of the auras a combo would let you TUTOR (each cast triggers Light-Paws' search).
   // A cast aura of mana value m can fetch a deck aura of cost ≤ m, different name, not already
@@ -781,7 +961,7 @@ export default function LightPawsConsole() {
     if (!comboIds.length) return 0;
     const comboSet = new Set(comboIds);
     const pool = deckAuras
-      .filter((a) => a.buff && a.canRide && !equipped.has(a.id) && !hand.has(a.id) && !comboSet.has(a.id))
+      .filter((a) => a.buff && a.canRide && !equipped.has(a.id) && !hand.has(a.id) && !graveSet.has(a.id) && !comboSet.has(a.id))
       .map((a) => ({ a, v: valueOfAdding([a.id]).score }))
       .sort((x, y) => y.v - x.v);
     const casts = comboIds.map((id) => deckAuras.find((a) => a.id === id)).filter(Boolean).sort((a, b) => b.cmc - a.cmc);
@@ -818,7 +998,7 @@ export default function LightPawsConsole() {
     })(0, [], 0, 0);
     const single = cands.filter(({ a }) => white >= a.cost.w && total >= effTotal(a))[0];
     return { ids: bestSet, eval: bestEval, single: single ? single.a : null };
-  }, [handAuras, equipped, hand, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, weights, lethalNeed, costRed, affinity, onBoard, supportPool, deckAuras]);
+  }, [handAuras, equipped, hand, graveSet, white, other, plains, artifacts, otherEnch, manualKw, baseP, baseT, counters, weights, lethalNeed, costRed, affinity, onBoard, supportPool, deckAuras]);
 
   // ---- actions ----
   const removeFromHand = (id) => setHand((s) => { if (!s.has(id)) return s; const n = new Set(s); n.delete(id); return n; });
@@ -827,32 +1007,105 @@ export default function LightPawsConsole() {
     const needs = ids.map((id) => deckAuras.find((x) => x.id === id)).find((a) => a && a.prot === "choice" && !protChoice[a.id]);
     if (needs) setProtPrompt(needs);
   };
-  const equip = (id) => {
-    let attaching = false;
-    setEquipped((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else { n.add(id); attaching = true; } return n; });
+  // ---- undo toast: every board-changing action shows what happened, with an Undo ----
+  const [toast, setToast] = useState(null);     // { msg, detail, snap, key }
+  const snapshot = () => ({ equipped: [...equipped], hand: [...hand], onBoard: [...onBoard], grave: [...grave], counters, opps, manualKw: [...manualKw], castLoop });
+  const notify = (msg, detail, snap) => setToast({ msg, detail: detail || null, snap: snap || null, key: Date.now() + Math.random() });
+  const undo = () => {
+    const s = toast && toast.snap; if (!s) return;
+    setEquipped(new Set(s.equipped)); setHand(new Set(s.hand)); setOnBoard(new Set(s.onBoard)); setGrave(s.grave);
+    setCounters(s.counters); setOpps(s.opps); setManualKw(new Set(s.manualKw)); setCastLoop(s.castLoop); setPendingFetch(null);
+    setToast({ msg: "Undone.", key: Date.now() }); track("undo");
+  };
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), toast.snap ? 6500 : 1800);
+    return () => clearTimeout(t);
+  }, [toast && toast.key]);
+  const auraById = (id) => deckAuras.find((x) => x.id === id) || byId[id];
+
+  // attach (or take off) an Aura on Light-Paws; how = "fetch" when it came from Light-Paws' trigger
+  const equip = (id, how) => {
+    const snap = snapshot();
+    const attaching = !equipped.has(id);
+    setEquipped((s) => { const n = new Set(s); attaching ? n.add(id) : n.delete(id); return n; });
     removeFromHand(id); // equipping anywhere (incl. manual on Active) pulls it out of your hand
-    setTimeout(() => { if (attaching) maybePromptProt([id]); }, 0);
+    setGrave((g) => (g.includes(id) ? g.filter((x) => x !== id) : g));
+    if (attaching) maybePromptProt([id]);
+    if (how === "fetch") notify(`Fetched ${nameOf(id)} and attached it to Light-Paws.`, "Light-Paws' trigger searched your library for it.", snap);
+    else notify(attaching ? `Attached ${nameOf(id)} to Light-Paws.` : `Took ${nameOf(id)} off Light-Paws.`, null, snap);
+  };
+  // an attached Aura leaves the battlefield: to the graveyard (or back to hand for Spirit Loop-style Auras)
+  const sendToGrave = (id) => {
+    const snap = snapshot(); const a = auraById(id);
+    setEquipped((s) => { const n = new Set(s); n.delete(id); return n; });
+    if (a && a.toHand) { setHand((s) => new Set(s).add(id)); notify(`${nameOf(id)} went back to your hand.`, "It returns to hand instead of staying in the graveyard.", snap); }
+    else { setGrave((g) => [id, ...g.filter((x) => x !== id)]); notify(`${nameOf(id)} went to the graveyard.`, a && a.recur ? a.recur + "." : null, snap); }
+  };
+  const fromGrave = (id, where) => {
+    const snap = snapshot();
+    setGrave((g) => g.filter((x) => x !== id));
+    if (where === "attach") { setEquipped((s) => new Set(s).add(id)); maybePromptProt([id]); }
+    if (where === "hand") setHand((s) => new Set(s).add(id));
+    notify(where === "attach" ? `Returned ${nameOf(id)} from your graveyard to Light-Paws.` : where === "hand" ? `Returned ${nameOf(id)} to your hand.` : `Exiled ${nameOf(id)} from your graveyard.`, null, snap);
+  };
+  // Light-Paws dies or is exiled. savedBy = an umbra (totem armor) Aura destroyed instead.
+  const lightPawsDies = (savedBy) => {
+    const snap = snapshot();
+    if (savedBy) {
+      const a = auraById(savedBy);
+      setEquipped((s) => { const n = new Set(s); n.delete(savedBy); return n; });
+      if (a && a.toHand) setHand((s) => new Set(s).add(savedBy)); else setGrave((g) => [savedBy, ...g.filter((x) => x !== savedBy)]);
+      notify(`Umbra armor saved Light-Paws.`, `${nameOf(savedBy)} was destroyed instead and all damage was removed.`, snap);
+      track("died/umbra"); return;
+    }
+    const ids = [...equippedIds];
+    const back = ids.filter((id) => (auraById(id) || {}).toHand);
+    const gy = ids.filter((id) => !back.includes(id));
+    setEquipped(new Set()); setCounters(0); setManualKw(new Set());
+    setGrave((g) => [...gy, ...g.filter((x) => !gy.includes(x))]);
+    if (back.length) setHand((s) => { const n = new Set(s); back.forEach((id) => n.add(id)); return n; });
+    notify("Light-Paws left the battlefield.", `${gy.length} Aura${gy.length === 1 ? "" : "s"} went to the graveyard${back.length ? `, ${back.map(nameOf).join(", ")} went back to hand` : ""}. Counters were removed.`, snap);
+    track("died/all");
+  };
+  // combat damage split between opponents: alloc = { oppId: amount }
+  const applyDamage = (alloc, asCmd) => {
+    const total = Object.values(alloc).reduce((a, b) => a + b, 0);
+    if (!total) return;
+    const snap = snapshot();
+    setOpps((os) => os.map((o) => { const n = alloc[o.id] || 0; return n ? { ...o, life: o.life - n, cmd: asCmd ? o.cmd + n : o.cmd } : o; }));
+    const hit = opps.filter((o) => alloc[o.id]);
+    const ko = hit.filter((o) => o.life - alloc[o.id] <= 0 || (asCmd && o.cmd + alloc[o.id] >= 21)).map((o) => o.name);
+    notify(`Dealt ${hit.map((o) => `${alloc[o.id]} to ${o.name}`).join(", ")}.`,
+      [ctx.have.has("lifelink") ? `Lifelink: you gain ${total} life.` : null, ko.length ? `${ko.join(" and ")} ${ko.length > 1 ? "are" : "is"} out!` : null].filter(Boolean).join(" "), snap);
+    track("damage/" + hit.length);
   };
   const addToHand = (id) => setHand((s) => new Set(s).add(id));
   const clearHand = () => setHand(new Set());
   // cast one or more auras from hand: attach them, remove from hand, then offer the fetch
   const castMany = (ids) => {
+    const snap = snapshot();
     setEquipped((s) => { const n = new Set(s); ids.forEach((id) => n.add(id)); return n; });
     setHand((s) => { const n = new Set(s); ids.forEach((id) => n.delete(id)); return n; });
     const mv = Math.max(1, ...ids.map((id) => { const a = deckAuras.find((x) => x.id === id); return a ? a.cmc : 1; }));
     maybePromptProt(ids);
     setPendingFetch({ count: ids.length, mv: Math.min(mv, 5) });
+    notify(`Cast ${ids.map(nameOf).join(", ")}: attached to Light-Paws.`,
+      `Light-Paws triggers${ids.length > 1 ? " for each one" : ""}: search your library for an Aura with mana value ${ids.length > 1 ? "up to that Aura's" : mv} or less.`, snap);
   };
   const castFromHand = (id) => castMany([id]);
   const castSupport = (id) => {
+    const snap = snapshot();
     setOnBoard((s) => new Set(s).add(id));
     setHand((s) => { const n = new Set(s); n.delete(id); return n; });
+    notify(`Cast ${nameOf(id)}: it's on your Board now.`, "Not an Aura, so Light-Paws doesn't trigger.", snap);
   };
   // ---- Cast & Fetch loop (for multi-aura best plays): cast one → fetch → back → next ----
   const startCastLoop = (ids) => setCastLoop({ remaining: [...ids] });
   const exitCastLoop = () => setCastLoop(null);
   const castLoopPick = (id) => {
     const a = deckAuras.find((x) => x.id === id);
+    notify(`Cast ${nameOf(id)}: attached to Light-Paws.`, `Now fetch an Aura with mana value ${a ? a.cmc : "?"} or less.`, snapshot());
     setEquipped((s) => new Set(s).add(id));
     setHand((s) => { const n = new Set(s); n.delete(id); return n; });
     setCastLoop((prev) => ({ remaining: (prev ? prev.remaining : []).filter((x) => x !== id) }));
@@ -862,7 +1115,10 @@ export default function LightPawsConsole() {
   };
   const backToCast = () => { setTab(1); setCastLoop((prev) => (prev && prev.remaining.length === 0 ? null : prev)); };
   const toggleManual = (k) => setManualKw((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
-  const resetTurn = () => { setEquipped(new Set()); setManualKw(new Set()); setProtChoice({}); setHand(new Set()); setArtifacts(0); setOtherEnch(0); setPlains(0); setWhite(2); setOther(0); setLethalNeed(21); setOnBoard(new Set()); };
+  const resetTurn = () => {
+    setEquipped(new Set()); setManualKw(new Set()); setProtChoice({}); setHand(new Set()); setArtifacts(0); setOtherEnch(0); setPlains(0); setWhite(2); setOther(0); setOnBoard(new Set());
+    setGrave([]); setCounters(0); setOpps((os) => os.map((o) => ({ ...o, life: START_LIFE, cmd: 0 }))); setToast(null);
+  };
 
   // ---- swipe between tabs ----
   const touch = useRef({ x: 0, y: 0 });
@@ -874,6 +1130,11 @@ export default function LightPawsConsole() {
       setTab((t) => Math.min(4, Math.max(0, t + (dx < 0 ? 1 : -1))));
     }
   };
+
+  // Light-Paws art follows the printing you picked for it (the art crop of that printing)
+  const lpPrint = chosenPrints[LIGHT_PAWS];
+  const heroShown = lpPrint && lpPrint.img ? lpPrint.img.replace(/\/(normal|large|png)\//, "/art_crop/") : heroImg;
+  const heroBy = lpPrint && lpPrint.img ? lpPrint.artist || heroArtist : heroArtist;
 
   const TABS = [
     { icon: Star, label: "Active" },
@@ -888,33 +1149,28 @@ export default function LightPawsConsole() {
       <div className="max-w-lg mx-auto pb-24" onTouchStart={onTS} onTouchEnd={onTE}>
         <AppHeader onSettings={() => openSettings()} />
 
-        {!hasDeck && tab < 4 && (
-          <div className="px-3 pt-10">
-            <div className="rounded-xl p-5 text-center" style={{ background: "rgba(232,184,75,0.10)", border: "1.5px solid rgba(232,184,75,0.5)" }}>
-              <div className="text-base font-bold mb-1" style={{ color: "#e8b84b" }}>Import your Light-Paws Commander deck to start playing!</div>
-              <p className="text-sm mb-3" style={{ color: "#b7b1a2" }}>Paste your decklist on the Deck tab and this app will track your auras, best plays, and fetches.</p>
-              <div className="flex items-center justify-center gap-2 flex-wrap">
-                <button onClick={() => setTab(4)} className="text-sm font-bold rounded-lg px-4 py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Go to Deck tab</button>
-                <button onClick={startTour} className="text-sm font-semibold rounded-lg px-4 py-2" style={{ background: "rgba(255,255,255,0.08)", color: "#cfc9ba" }}>Show me around</button>
-              </div>
-            </div>
+        {activeDeck && activeDeck.sample && tab < 4 && (
+          <div className="mx-3 mt-2 rounded-lg px-3 py-2 flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)" }}>
+            <span className="text-[12px] flex-1 leading-snug" style={{ color: "#b7b1a2" }}>Playing the <b style={{ color: "#ece7db" }}>sample deck</b>. Import yours to play your own list.</span>
+            <button onClick={() => setTab(4)} className="text-[12px] font-bold rounded-lg px-3 py-1.5 flex-shrink-0" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Import</button>
           </div>
         )}
         {hasDeck && tab === 0 && (
-          <BoardTab {...{ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, lethalNeed, setLethalNeed, curDS }} />
+          <BoardTab {...{ heroImg: heroShown, heroArtist: heroBy, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch,
+            counters, setCounters, onPortraitHold: () => setPickCard({ name: LIGHT_PAWS }), grave, graveSet, fromGrave, sendToGrave, lightPawsDies, opps, setOpps, applyDamage, auraById }} />
         )}
         {hasDeck && tab === 1 && (
-          <PlayTab {...{ onOpenWeights: () => openSettings("weights"), white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName: nameOf, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard }} />
+          <PlayTab {...{ onOpenWeights: () => openSettings("weights"), white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, counters, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, graveSet, byName: nameOf, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard }} />
         )}
         {hasDeck && tab === 2 && (
-          <FetchTab {...{ onOpenWeights: () => openSettings("weights"), deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast, onAfterFetch: () => setTab(1), ctx, equippedIds, curDS, resetTurn }} />
+          <FetchTab {...{ onOpenWeights: () => openSettings("weights"), deckAuras, equipped, hand, graveSet, equip: (id) => equip(id, "fetch"), valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv: fetchMv, setMv: setFetchMv, loopActive: !!castLoop, onBackToCast: backToCast, onAfterFetch: () => setTab(1), ctx, equippedIds, curDS, resetTurn }} />
         )}
         {hasDeck && tab === 3 && (
           <BoardStateTab {...{ supportPool, onBoard, setOnBoard, boardCards, costReduction, drawPerAuraCast, equippedIds,
             white, setWhite, other, setOther, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, resetTurn }} />
         )}
         {tab === 4 && (
-          <DeckTab {...{ decks, activeId, onImport: importList, importing, selectDeck, deleteDeck, renameDeck, synced: !!enriched, onViewList: (id) => { setViewDeckId(id); track("deck/view-list"); } }} />
+          <DeckTab {...{ decks, activeId: activeDeck ? activeDeck.id : null, onImport: importList, importing, selectDeck, deleteDeck, renameDeck, synced: !!enriched, onViewList: (id, edit) => { setViewDeckId(id); setViewEdit(!!edit); track("deck/view-list"); } }} />
         )}
 
         <TabFooter />
@@ -944,9 +1200,11 @@ export default function LightPawsConsole() {
       )}
 
       {viewDeckId && decks.some((d) => d.id === viewDeckId) && (
-        <DeckListSheet deck={decks.find((d) => d.id === viewDeckId)} playing={viewDeckId === activeId}
+        <DeckListSheet deck={decks.find((d) => d.id === viewDeckId)} playing={activeDeck && viewDeckId === activeDeck.id}
           onPlay={() => { selectDeck(viewDeckId); setViewDeckId(null); }}
-          onClose={() => setViewDeckId(null)} onPick={setPickCard} chosenPrints={chosenPrints} openInfoCard={openInfo} />
+          onClose={() => setViewDeckId(null)} onPick={setPickCard} chosenPrints={chosenPrints} openInfoCard={openInfo}
+          startEdit={viewEdit} setCardQty={setCardQty} toggleOut={toggleOut} addCardByName={addCardByName}
+          onCopy={() => { const nid = copyDeck(viewDeckId); if (nid) setViewDeckId(nid); return nid; }} />
       )}
       {settingsOpen && (
         <SettingsSheet initialSection={settingsOpen === true ? null : settingsOpen} onClose={() => setSettingsOpen(null)}
@@ -954,7 +1212,7 @@ export default function LightPawsConsole() {
           onTour={() => { setSettingsOpen(null); startTour(); }} />
       )}
       {infoCard && <CardInfoModal aura={infoCard} chosenPrint={chosenPrints[infoCard.name]} onClose={() => setInfoCard(null)}
-        onChangePrint={() => { const n = infoCard.name; setInfoCard(null); setPickCard({ name: n }); }} />}
+        onChoose={(pr) => { choosePrint(infoCard.name, pr); track("printing/choose-popup"); }} />}
       {protPrompt && (
         <div onClick={() => setProtPrompt(null)} className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(0,0,0,0.65)" }}>
           <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl p-5" style={{ background: "#1a1e2b", border: "1px solid rgba(147,199,230,0.5)" }}>
@@ -987,73 +1245,89 @@ export default function LightPawsConsole() {
         </div>
       )}
       {pickCard && <CardViewer card={pickCard} chosen={chosenPrints[pickCard.name]} onChoose={(pr) => { choosePrint(pickCard.name, pr); track("printing/choose"); }} onClose={() => setPickCard(null)} />}
+      {toast && <UndoToast toast={toast} onUndo={undo} onClose={() => setToast(null)} />}
     </div>
   );
 }
 
 function byName(id) { return byId[id] ? byId[id].name : id; }
 
-/* ====================== TAB 1 · BOARD ====================== */
-function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch, lethalNeed, setLethalNeed }) {
+/* ====================== TAB 1 · ACTIVE ====================== */
+const BTN_GOLD = { background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" };
+const BTN_2 = { background: "rgba(255,255,255,0.07)", color: "#cfc9ba", border: "1px solid rgba(255,255,255,0.16)" };
+const cmcBucket = (a) => Math.max(1, Math.min(5, a.cmc));
+
+function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, curTough, projDmg, curDS, deckAuras, equipped, equip, equippedIds, resetTurn, white, setWhite, other, setOther, openInfo, protChoice, setProt, plains, setPlains, artifacts, setArtifacts, otherEnch, setOtherEnch,
+  counters, setCounters, onPortraitHold, grave, graveSet, fromGrave, sendToGrave, lightPawsDies, opps, setOpps, applyDamage, auraById }) {
   const [q, setQ] = useState("");
   const [filters, setFilters] = useState(() => new Set());
   const [cmc, setCmc] = useState(() => new Set());
+  const [dying, setDying] = useState(false);
   const toggleFilter = (k) => setFilters((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const toggleCmc = (b) => setCmc((s) => { const n = new Set(s); n.has(b) ? n.delete(b) : n.add(b); return n; });
-  const matchCmc = (a) => (!cmc.size ? true : [...cmc].some((b) => (b === "5+" ? a.cmc >= 5 : a.cmc === b)));
 
-  const results = useMemo(() => {
-    return deckAuras.filter((a) => {
-      if (equipped.has(a.id)) return false;
-      if (!auraMatchesText(a, q)) return false;
-      if (filters.size && ![...filters].some((f) => a.kw.includes(f))) return false;
-      if (!matchCmc(a)) return false;
-      return true;
-    }).sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name));
-  }, [q, filters, cmc, deckAuras, equipped]);
+  const pool = useMemo(() => deckAuras.filter((a) => !equipped.has(a.id) && !graveSet.has(a.id)), [deckAuras, equipped, graveSet]);
+  const availableKw = KW_ORDER.filter((k) => pool.some((a) => a.kw.includes(k)));
+  const results = pool.filter((a) => auraMatchesText(a, q)
+      && (!filters.size || [...filters].every((f) => a.kw.includes(f)))
+      && (!cmc.size || cmc.has(cmcBucket(a))))
+    .sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name));
 
-  const total = white + other;
-  const R = 41; // ring radius (% of the square-ish stage)
+  const swing = curPower * (curDS ? 2 : 1);
+  const ring = useTapHold(() => setCounters((c) => c + 1), onPortraitHold);
+  const umbras = equippedIds.map(auraById).filter((a) => a && a.kw.includes("totemArmor"));
+  const died = () => { if (umbras.length) setDying(true); else lightPawsDies(); };
+  const R = 41; // keyword ring radius (% of the stage)
   return (
     <div>
-      {/* TOP: portrait + rune ring */}
+      {/* TOP: portrait + counter ring + keyword ring */}
       <div className="relative px-3 pt-4">
         <div className="flex items-center justify-between mb-1">
           <div>
-            <div className="text-[10px] tracking-[0.3em] uppercase" style={{ color: "#c79a3e" }}>Active · Light-Paws</div>
+            <div className="text-[10px] tracking-[0.3em] uppercase" style={{ color: HDR }}>Active · Light-Paws</div>
             <div className="text-sm" style={{ color: "#9a9484" }}>What's attached to your commander right now</div>
           </div>
-          <button onClick={resetTurn} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>
+          <button onClick={resetTurn} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg" style={BTN_2}>
             <RotateCcw size={13} /> Reset
           </button>
         </div>
 
         <div className="relative mx-auto" style={{ height: 330, maxWidth: 380 }}>
           {/* halo */}
-          <div className="absolute left-1/2 top-1/2" style={{ width: 200, height: 200, transform: "translate(-50%,-50%)", borderRadius: "50%", background: "radial-gradient(circle, rgba(232,184,75,0.35), rgba(232,184,75,0) 70%)" }} />
-          {/* portrait */}
-          <div className="absolute left-1/2 top-1/2 overflow-hidden shadow-xl"
-            style={{ width: 132, height: 132, transform: "translate(-50%,-50%)", borderRadius: "50%", border: "3px solid #e8b84b", background: "#0d0f16" }}>
-            {heroImg ? (
-              <img src={heroImg} alt="Light-Paws" className="w-full h-full object-cover" style={{ objectPosition: "50% 30%" }} />
+          <div className="absolute left-1/2 top-1/2 pointer-events-none" style={{ width: 200, height: 200, transform: "translate(-50%,-50%)", borderRadius: "50%", background: "radial-gradient(circle, rgba(232,184,75,0.35), rgba(232,184,75,0) 70%)" }} />
+          {/* counter ring around the portrait: tap = +1/+1 counter, hold = Light-Paws' printings */}
+          <div {...ring} role="button" aria-label="Add a +1/+1 counter to Light-Paws. Press and hold to change its printing." className="absolute left-1/2 top-1/2 flex items-center justify-center"
+            style={{ width: 164, height: 164, transform: "translate(-50%,-50%)", borderRadius: "50%", border: "2.5px dashed rgba(232,184,75,0.8)", cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
+            <div className="overflow-hidden shadow-xl" style={{ width: 132, height: 132, borderRadius: "50%", border: "3px solid #e8b84b", background: "#0d0f16" }}>
+              {heroImg ? <img src={heroImg} alt="Light-Paws" className="w-full h-full object-cover" style={{ objectPosition: "50% 30%" }} /> : <FoxEmblem />}
+            </div>
+          </div>
+          {/* counter badge (sits in the gap at the bottom of the keyword ring) */}
+          <div className="absolute left-1/2 flex items-center gap-1 rounded-full px-1 py-0.5" style={{ top: "calc(50% + 68px)", transform: "translateX(-50%)", background: "#1a1e2b", border: "1px solid rgba(232,184,75,0.6)", zIndex: 2 }}>
+            {counters > 0 ? (
+              <>
+                <button onClick={() => setCounters((c) => Math.max(0, c - 1))} aria-label="Remove a +1/+1 counter" className="w-6 h-6 rounded-full flex items-center justify-center" style={BTN_2}><Minus size={12} /></button>
+                <span className="text-[12px] font-black px-0.5 whitespace-nowrap" style={{ color: "#f0ead9" }}>+{counters}/+{counters}</span>
+                <button onClick={() => setCounters((c) => c + 1)} aria-label="Add a +1/+1 counter" className="w-6 h-6 rounded-full flex items-center justify-center" style={BTN_GOLD}><Plus size={12} /></button>
+              </>
             ) : (
-              <FoxEmblem />
+              <button onClick={() => setCounters(1)} className="text-[11px] font-bold px-2 py-0.5 whitespace-nowrap" style={{ color: "#e8b84b" }}>+ counter</button>
             )}
           </div>
-          {/* rune ring */}
+          {/* keyword ring (tap to toggle by hand) */}
           {KW_ORDER.map((k, i) => {
             const ang = (-90 + i * (360 / KW_ORDER.length)) * Math.PI / 180;
             const left = 50 + R * Math.cos(ang), top = 50 + R * Math.sin(ang);
             const on = hasKw(ctx.have, k);
             const Ico = KW[k].Icon;
             return (
-              <button key={k} onClick={() => toggleManual(k)}
+              <button key={k} onClick={() => toggleManual(k)} aria-pressed={on}
                 className="absolute flex flex-col items-center justify-center transition-all"
                 style={{
                   left: `${left}%`, top: `${top}%`, transform: "translate(-50%,-50%)",
                   width: 58, height: 58, borderRadius: "50%",
-                  border: on ? "2px solid #e8b84b" : "1.5px solid rgba(255,255,255,0.14)",
-                  background: on ? "linear-gradient(160deg,#e8b84b,#b9852a)" : "rgba(255,255,255,0.04)",
+                  border: on ? "2px solid #e8b84b" : "1.5px solid rgba(255,255,255,0.22)",
+                  background: on ? "linear-gradient(160deg,#e8b84b,#b9852a)" : "rgba(255,255,255,0.05)",
                   color: on ? "#221a09" : "#8b8778",
                   boxShadow: on ? "0 0 16px rgba(232,184,75,0.6)" : "none",
                 }}>
@@ -1063,98 +1337,94 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
             );
           })}
         </div>
+        <div className="text-center text-[10.5px] -mt-1 mb-1" style={{ color: "#7d7869" }}>Tap the dashed ring: +1/+1 counter · hold it: Light-Paws' printings · tap a keyword to toggle it</div>
 
         {/* P/T */}
-        <div className="text-center -mt-1">
+        <div className="text-center">
           <div className="flex items-baseline justify-center gap-2">
             <span className="text-5xl font-black" style={{ color: "#f4ecd8", textShadow: "0 2px 10px rgba(0,0,0,0.5)" }}>{curPower}</span>
-            <span className="text-2xl font-bold" style={{ color: "#c79a3e" }}>/</span>
+            <span className="text-2xl font-bold" style={{ color: HDR }}>/</span>
             <span className="text-5xl font-black" style={{ color: "#f4ecd8", textShadow: "0 2px 10px rgba(0,0,0,0.5)" }}>{curTough}</span>
-            {curDS && <span className="text-lg font-black ml-1" style={{ color: "#e8b84b" }}>×2 = {curPower * 2}</span>}
+            {curDS && <span className="text-lg font-black ml-1" style={{ color: "#f0ead9" }}>×2 = {curPower * 2}</span>}
           </div>
-          <div className="mt-2 flex items-center justify-center gap-2 flex-wrap">
-            <span className="inline-flex items-center gap-1.5 rounded-full px-3 py-1" style={{ background: "rgba(232,184,75,0.14)", border: "1px solid rgba(232,184,75,0.4)" }}>
-              <span className="text-sm font-black" style={{ color: "#e8b84b" }}>{equippedIds.length}</span>
-              <span className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: "#c79a3e" }}>Auras attached</span>
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full pl-3 pr-1.5 py-0.5" style={{ background: (curPower * (curDS ? 2 : 1)) >= lethalNeed && lethalNeed > 0 ? "rgba(143,211,154,0.18)" : "rgba(255,255,255,0.05)", border: (curPower * (curDS ? 2 : 1)) >= lethalNeed && lethalNeed > 0 ? "1px solid #8fd39a" : "1px solid rgba(255,255,255,0.12)" }}>
-              <span className="text-[10px] uppercase tracking-wide" style={{ color: (curPower * (curDS ? 2 : 1)) >= lethalNeed && lethalNeed > 0 ? "#8fd39a" : "#8b8778" }}>Lethal at</span>
-              <MiniStep value={lethalNeed} set={setLethalNeed} />
-            </span>
+          <div className="text-[12px] mt-1" style={{ color: "#9a9484" }}>
+            {equippedIds.length} Aura{equippedIds.length === 1 ? "" : "s"} attached{counters > 0 ? ` · ${counters} counter${counters === 1 ? "" : "s"}` : ""}
           </div>
-          {lethalNeed > 0 && (curPower * (curDS ? 2 : 1)) >= lethalNeed && (
-            <div className="text-[11px] font-bold mt-1" style={{ color: "#8fd39a" }}>Swing is lethal ({curPower * (curDS ? 2 : 1)} ≥ {lethalNeed})</div>
-          )}
         </div>
 
-        {/* protection (above the counters & mana) */}
+        {/* protection */}
         <div className="px-3 mt-3">
           <ProtectionTracker protAuras={ctx.on.filter((a) => a.prot)} protChoice={protChoice} setProt={setProt} />
         </div>
 
-        {heroArtist && <div className="text-center text-[10px] mt-2" style={{ color: "#5f5a4e" }}>Art by {heroArtist} · © Wizards of the Coast</div>}
+        {heroArtist && <div className="text-center text-[10px] mt-1" style={{ color: "#5f5a4e" }}>Art by {heroArtist} · © Wizards of the Coast</div>}
       </div>
 
-      {/* divider */}
       <div className="h-px mx-3 my-3" style={{ background: "linear-gradient(90deg,transparent,rgba(232,184,75,0.5),transparent)" }} />
 
-      {/* BOTTOM: equip search + running total */}
       <div className="px-3">
-        {/* running total */}
+        {/* attached auras */}
         <div className="flex items-center justify-between mb-1.5">
-          <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "#c79a3e" }}>Equipped ({equippedIds.length})</span>
+          <span className="text-xs font-bold uppercase tracking-wide" style={{ color: HDR }}>Enchants/Auras ({equippedIds.length})</span>
           {(ctx.addP > 0 || ctx.addT > 0) && <span className="text-xs font-bold" style={{ color: "#cfc9ba" }}>+{ctx.addP}/+{ctx.addT} from auras</span>}
         </div>
-        <div className="flex flex-wrap gap-1.5 mb-3 min-h-[28px]">
-          {equippedIds.length === 0 && <span className="text-sm italic" style={{ color: "#6f6a5d" }}>Nothing equipped yet — search below to add what you cast.</span>}
-          {equippedIds.map((id) => (
-            <button key={id} onClick={() => equip(id)} className="inline-flex items-center gap-1 rounded-full pl-2.5 pr-1.5 py-1 text-sm font-semibold"
-              style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
-              {(deckAuras.find((a) => a.id === id) || {}).name || byName(id)} <X size={13} />
-            </button>
-          ))}
-        </div>
-
-        {/* search */}
-        <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-2" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
-          <Search size={16} style={{ color: "#8b8778" }} />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search: name, keyword, or mana value (vigilance, flying, 2…)"
-            className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
-          {q && <button onClick={() => setQ("")}><X size={15} style={{ color: "#8b8778" }} /></button>}
-        </div>
-
-        {/* hint */}
-        <div className="text-[11px] mb-2" style={{ color: "#7d7869" }}>Tap to pick · confirm to add · hold for the full card</div>
-
-        {/* keyword filters */}
-        <NoSwipe className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-1" style={{ WebkitOverflowScrolling: "touch" }}>
-          <Filter size={13} style={{ color: "#8b8778", flexShrink: 0 }} />
-          {KW_ORDER.map((k) => {
-            const on = filters.has(k);
+        <div className="flex flex-wrap gap-1.5 mb-1 min-h-[28px]">
+          {equippedIds.length === 0 && <span className="text-sm italic" style={{ color: "#6f6a5d" }}>No Auras attached yet. Search below to add what you cast.</span>}
+          {equippedIds.map((id) => {
+            const a = auraById(id);
             return (
-              <button key={k} onClick={() => toggleFilter(k)} className="text-[11px] font-semibold rounded-full px-2.5 py-1 whitespace-nowrap flex-shrink-0"
-                style={{ background: on ? "#e8b84b" : "rgba(255,255,255,0.06)", color: on ? "#221a09" : "#a8a293", border: on ? "none" : "1px solid rgba(255,255,255,0.1)" }}>
-                {KW[k].label}
-              </button>
+              <span key={id} className="inline-flex items-center rounded-full text-sm font-semibold" style={BTN_GOLD}>
+                <button onClick={() => a && openInfo(a)} className="pl-2.5 pr-1 py-1">{a ? a.name : byName(id)}</button>
+                <button onClick={() => sendToGrave(id)} aria-label={`Send ${a ? a.name : id} to the graveyard`} className="pr-1.5 pl-0.5 py-1"><X size={14} /></button>
+              </span>
             );
           })}
-        </NoSwipe>
+        </div>
+        {equippedIds.length > 0 && <div className="text-[10.5px] mb-3" style={{ color: "#7d7869" }}>Tap a name for the card (swipe to change printing) · × sends it to the graveyard</div>}
 
-        {/* cost filters */}
-        <NoSwipe className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-2" style={{ WebkitOverflowScrolling: "touch" }}>
-          <span className="text-[11px] font-semibold flex-shrink-0" style={{ color: "#8b8778" }}>Cost</span>
-          {[1, 2, 3, 4, "5+"].map((b) => {
-            const on = cmc.has(b);
-            return (
-              <button key={b} onClick={() => toggleCmc(b)} className="text-[11px] font-bold rounded-full flex-shrink-0 flex items-center justify-center"
-                style={{ minWidth: 30, height: 28, padding: "0 8px", background: on ? "#e8b84b" : "rgba(255,255,255,0.06)", color: on ? "#221a09" : "#a8a293", border: on ? "none" : "1px solid rgba(255,255,255,0.1)" }}>
-                {b}
-              </button>
-            );
-          })}
-        </NoSwipe>
+        <OpponentsPanel opps={opps} setOpps={setOpps} swing={swing} applyDamage={applyDamage} />
 
-        {/* results */}
+        {/* graveyard */}
+        <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)" }}>
+          <div className="flex items-center justify-between gap-2 mb-1.5">
+            <span className="text-xs font-bold uppercase tracking-wide flex items-center gap-1.5" style={{ color: HDR }}><Skull size={13} /> Graveyard ({grave.length})</span>
+            {(equippedIds.length > 0 || counters > 0) && (
+              <button onClick={died} className="text-[11px] font-bold rounded-lg px-2.5 py-1.5" style={{ ...BTN_2, color: "#e6939a" }}>Light-Paws died</button>
+            )}
+          </div>
+          {grave.length === 0 ? (
+            <p className="text-[11px]" style={{ color: "#6f6a5d" }}>Auras that leave Light-Paws land here, so you can see what you can bring back.</p>
+          ) : (
+            <div className="grid gap-1.5">
+              {grave.map((id) => {
+                const a = auraById(id);
+                if (!a) return null;
+                return (
+                  <div key={id} className="rounded-lg px-2.5 py-2" style={{ background: "rgba(0,0,0,0.22)", border: "1px solid rgba(255,255,255,0.07)" }}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="min-w-0">
+                        <div className="font-semibold text-[14px] flex items-center gap-1.5" style={{ color: "#e6dfce" }}>{a.name} <ManaCost aura={a} /></div>
+                        {a.recur && <div className="text-[10.5px]" style={{ color: "#93c7e6" }}>{a.recur}</div>}
+                      </div>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        {a.canRide && <button onClick={() => fromGrave(id, "attach")} className="text-[11px] font-bold rounded-lg px-2.5 py-1.5" style={BTN_GOLD}>Attach</button>}
+                        <button onClick={() => fromGrave(id, "hand")} className="text-[11px] font-bold rounded-lg px-2 py-1.5" style={BTN_2}>Hand</button>
+                        <button onClick={() => fromGrave(id, "exile")} aria-label={`Exile ${a.name}`} className="rounded-lg px-1.5 py-1.5" style={BTN_2}><X size={13} /></button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* add auras to Light-Paws */}
+        <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: HDR }}>Add an Aura you cast</div>
+        <AuraFilterBar mvLabel="Mana value" mvSelected={cmc} onMv={toggleCmc} q={q} setQ={setQ}
+          kwAvail={availableKw} kwSel={filters} toggleKw={toggleFilter} onClear={() => { setFilters(new Set()); setCmc(new Set()); setQ(""); }}
+          hint="Tap a card to pick it, then Add · hold for the full card" />
+
         <div className="grid gap-1.5">
           {results.map((a) => (
             <EquipRow key={a.id} aura={a} ctx={ctx} onEquip={() => equip(a.id)} onInfo={() => openInfo(a)} />
@@ -1162,13 +1432,190 @@ function BoardTab({ heroImg, heroArtist, ctx, manualKw, toggleManual, curPower, 
           {results.length === 0 && <div className="text-sm italic py-3 text-center" style={{ color: "#6f6a5d" }}>No matching auras in your deck.</div>}
         </div>
       </div>
+
+      {dying && (
+        <div onClick={() => setDying(false)} className="fixed inset-0 z-50 flex items-center justify-center p-6" style={{ background: "rgba(0,0,0,0.65)" }}>
+          <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl p-5" style={{ background: "#1a1e2b", border: "1px solid rgba(255,255,255,0.15)" }}>
+            <div className="font-bold text-lg mb-1" style={{ color: "#f0ead9" }}>Light-Paws would die</div>
+            <p className="text-sm mb-3" style={{ color: "#b7b1a2" }}>If it was destroyed, an umbra (totem armor) Aura can be destroyed instead and all damage is removed.</p>
+            <div className="grid gap-1.5 mb-2">
+              {umbras.map((a) => (
+                <button key={a.id} onClick={() => { setDying(false); lightPawsDies(a.id); }} className="w-full text-sm font-bold rounded-lg py-2.5 inline-flex items-center justify-center gap-1.5" style={BTN_GOLD}>
+                  <ArmorIcon size={15} /> Destroy {a.name} instead
+                </button>
+              ))}
+            </div>
+            <button onClick={() => { setDying(false); lightPawsDies(); }} className="w-full text-sm font-bold rounded-lg py-2.5 mb-2" style={{ ...BTN_2, color: "#e6939a" }}>It left anyway (exiled, sacrificed…)</button>
+            <button onClick={() => setDying(false)} className="w-full text-sm font-semibold rounded-lg py-2" style={{ color: "#8b8778" }}>Cancel</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// One shared filter block so Active and Fetch look and behave the same:
+// mana value buttons, then search, then keyword chips (a card must have every keyword you pick).
+function AuraFilterBar({ mvLabel, mvSelected, onMv, q, setQ, kwAvail, kwSel, toggleKw, onClear, hint }) {
+  const chip = (on) => (on ? { ...BTN_GOLD, border: "1px solid #e8b84b" } : { background: "rgba(255,255,255,0.05)", color: "#cfc9ba", border: "1px solid rgba(255,255,255,0.2)" });
+  const any = q || kwSel.size;
+  return (
+    <div className="rounded-xl p-2.5 mb-2" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.08)" }}>
+      <div className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: HDR }}>{mvLabel}</div>
+      <NoSwipe className="flex items-center gap-1.5 mb-2">
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} onClick={() => onMv(n)} aria-pressed={mvSelected.has(n)} className="flex-1 rounded-lg font-bold text-base py-2" style={chip(mvSelected.has(n))}>{n === 5 ? "5+" : n}</button>
+        ))}
+      </NoSwipe>
+      <div className="flex items-center gap-2 rounded-lg px-3 py-2 mb-2" style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.14)" }}>
+        <Search size={16} style={{ color: "#8b8778" }} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search: name, keyword, or note"
+          className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
+        {q && <button onClick={() => setQ("")} aria-label="Clear search"><X size={15} style={{ color: "#8b8778" }} /></button>}
+      </div>
+      {kwAvail.length > 0 && (
+        <NoSwipe className="flex items-center gap-1.5 overflow-x-auto pb-1" style={{ WebkitOverflowScrolling: "touch" }}>
+          <Filter size={13} style={{ color: "#8b8778", flexShrink: 0 }} />
+          {kwAvail.map((k) => (
+            <button key={k} onClick={() => toggleKw(k)} aria-pressed={kwSel.has(k)} className="text-[11px] font-semibold rounded-full px-2.5 py-1 whitespace-nowrap flex-shrink-0" style={chip(kwSel.has(k))}>{KW[k].label}</button>
+          ))}
+          {any ? <button onClick={onClear} className="text-[11px] px-2 py-1 rounded-full flex-shrink-0" style={{ color: "#8b8778" }}>clear</button> : null}
+        </NoSwipe>
+      )}
+      {hint && <div className="text-[10.5px] mt-1.5" style={{ color: "#7d7869" }}>{hint}</div>}
+    </div>
+  );
+}
+
+// Each opponent's life and Light-Paws commander damage; "Deal damage" splits a hit between them.
+function OpponentsPanel({ opps, setOpps, swing, applyDamage }) {
+  const [split, setSplit] = useState(null);
+  const upd = (id, f) => setOpps((os) => os.map((o) => (o.id === id ? f(o) : o)));
+  const add = () => setOpps((os) => (os.length >= 6 ? os : [...os, { id: "o" + Date.now(), name: "Opponent " + (os.length + 1), life: START_LIFE, cmd: 0 }]));
+  const remove = (id) => setOpps((os) => (os.length <= 1 ? os : os.filter((o) => o.id !== id)));
+  const alive = opps.filter((o) => !oppOut(o));
+  const openSplit = () => {
+    const target = alive.slice().sort((a, b) => oppNeed(a) - oppNeed(b))[0];
+    setSplit({ [target.id]: swing });
+  };
+  return (
+    <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(255,255,255,0.03)", border: "1px solid rgba(255,255,255,0.09)" }}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs font-bold uppercase tracking-wide flex items-center gap-1.5" style={{ color: HDR }}><Users size={13} /> Opponents</span>
+        <span className="text-[11px]" style={{ color: "#8b8778" }}>Light-Paws swings for <b style={{ color: "#f0ead9" }}>{swing}</b></span>
+      </div>
+      <div className="grid gap-1.5">
+        {opps.map((o) => {
+          const out = oppOut(o), need = oppNeed(o), lethal = !out && need > 0 && swing >= need;
+          return (
+            <div key={o.id} className="rounded-lg px-2.5 py-2" style={{ background: lethal ? "rgba(143,211,154,0.10)" : "rgba(0,0,0,0.22)", border: lethal ? "1px solid rgba(143,211,154,0.6)" : "1px solid rgba(255,255,255,0.07)", opacity: out ? 0.55 : 1 }}>
+              <div className="flex items-center justify-between gap-2">
+                <button onClick={() => { const n = prompt("Opponent name", o.name); if (n && n.trim()) upd(o.id, (x) => ({ ...x, name: n.trim().slice(0, 24) })); }}
+                  className="text-[13px] font-bold inline-flex items-center gap-1 min-w-0" style={{ color: "#ece7db" }}>
+                  <span className="truncate">{o.name}</span> <Pencil size={11} style={{ color: "#8b8778", flexShrink: 0 }} />
+                </button>
+                <span className="text-[11px] font-bold whitespace-nowrap" style={{ color: out ? "#e6939a" : lethal ? "#8fd39a" : "#8b8778" }}>
+                  {out ? "Out" : lethal ? `Lethal now (needs ${need})` : `Needs ${need}`}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-2 mt-1.5">
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase" style={{ color: "#8b8778" }}>Life</span>
+                  <MiniStep value={o.life} set={(f) => upd(o.id, (x) => ({ ...x, life: f(x.life) }))} />
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="text-[10px] uppercase" style={{ color: "#8b8778" }}>Cmdr</span>
+                  <MiniStep value={o.cmd} set={(f) => upd(o.id, (x) => ({ ...x, cmd: f(x.cmd) }))} />
+                  <span className="text-[10px]" style={{ color: "#6f6a5d" }}>/21</span>
+                </span>
+                {opps.length > 1 && <button onClick={() => remove(o.id)} aria-label={`Remove ${o.name}`} className="rounded-md p-1" style={BTN_2}><X size={12} /></button>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex gap-2 mt-2">
+        <button onClick={openSplit} disabled={!swing || !alive.length} className="flex-1 text-sm font-bold rounded-lg py-2 inline-flex items-center justify-center gap-1.5"
+          style={!swing || !alive.length ? { ...BTN_2, opacity: 0.5 } : BTN_GOLD}><Target size={15} /> Deal damage</button>
+        {opps.length < 6 && <button onClick={add} className="text-xs font-bold rounded-lg px-3 inline-flex items-center gap-1" style={BTN_2}><Plus size={13} /> Opponent</button>}
+      </div>
+      {split && <DamageSplit opps={alive} swing={swing} init={split} onClose={() => setSplit(null)} onApply={(alloc, cmd) => { applyDamage(alloc, cmd); setSplit(null); }} />}
+    </div>
+  );
+}
+
+function DamageSplit({ opps, swing, init, onApply, onClose }) {
+  const [total, setTotal] = useState(swing);
+  const [alloc, setAlloc] = useState(init);
+  const [cmd, setCmd] = useState(true);
+  const used = Object.values(alloc).reduce((a, b) => a + b, 0);
+  const left = total - used;
+  const setFor = (id, v) => setAlloc((s) => ({ ...s, [id]: Math.max(0, v) }));
+  return (
+    <div onClick={onClose} className="fixed inset-0 z-50 flex items-end sm:items-center justify-center p-3" style={{ background: "rgba(0,0,0,0.65)" }}>
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-sm rounded-2xl p-4" style={{ background: "#1a1e2b", border: "1px solid rgba(255,255,255,0.15)", maxHeight: "88vh", overflowY: "auto" }}>
+        <div className="flex items-start justify-between gap-2 mb-1">
+          <div className="font-bold text-lg" style={{ color: "#f0ead9" }}>Deal damage</div>
+          <button onClick={onClose} aria-label="Close" className="p-1 rounded" style={BTN_2}><X size={16} /></button>
+        </div>
+        <p className="text-[12px] mb-3 leading-snug" style={{ color: "#9a9484" }}>Split the damage between opponents however it was dealt (extra combats, double strike, different attacks). Tap a name to send everything left there.</p>
+        <div className="flex items-center justify-between rounded-lg px-3 py-2 mb-2" style={{ background: "rgba(0,0,0,0.25)" }}>
+          <span className="text-[12px]" style={{ color: "#cfc9ba" }}>Total damage</span>
+          <MiniStep value={total} set={setTotal} />
+        </div>
+        <div className="grid gap-1.5 mb-2">
+          {opps.map((o) => {
+            const v = alloc[o.id] || 0, need = oppNeed(o);
+            return (
+              <div key={o.id} className="flex items-center justify-between gap-2 rounded-lg px-3 py-2" style={{ background: "rgba(255,255,255,0.04)", border: v >= need && v > 0 ? "1px solid rgba(143,211,154,0.6)" : "1px solid rgba(255,255,255,0.08)" }}>
+                <button onClick={() => setFor(o.id, v + Math.max(0, left))} className="text-left min-w-0">
+                  <div className="text-[13px] font-bold truncate" style={{ color: "#ece7db" }}>{o.name}</div>
+                  <div className="text-[10.5px]" style={{ color: v >= need && v > 0 ? "#8fd39a" : "#8b8778" }}>{o.life} life · {o.cmd}/21 cmdr{v >= need && v > 0 ? " · lethal" : ` · needs ${need}`}</div>
+                </button>
+                <span className="inline-flex items-center gap-1">
+                  <button onClick={() => setFor(o.id, v - 1)} className="w-7 h-7 rounded flex items-center justify-center" style={BTN_2}><Minus size={13} /></button>
+                  <span className="text-base font-bold w-7 text-center" style={{ color: "#f0ead9" }}>{v}</span>
+                  <button onClick={() => left > 0 && setFor(o.id, v + 1)} disabled={left <= 0} className="w-7 h-7 rounded flex items-center justify-center" style={{ ...BTN_2, opacity: left <= 0 ? 0.4 : 1 }}><Plus size={13} /></button>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+        <div className="text-[11px] mb-2 text-center" style={{ color: left < 0 ? "#e6939a" : "#8b8778" }}>{left === 0 ? "All damage assigned" : left > 0 ? `${left} left to assign` : `${-left} more than the total`}</div>
+        <label className="flex items-center gap-2 text-[12px] mb-3 cursor-pointer" style={{ color: "#cfc9ba" }}>
+          <input type="checkbox" checked={cmd} onChange={(e) => setCmd(e.target.checked)} /> Counts as commander damage (Light-Paws combat damage)
+        </label>
+        <button onClick={() => onApply(alloc, cmd)} disabled={!used} className="w-full text-sm font-bold rounded-lg py-2.5" style={used ? BTN_GOLD : { ...BTN_2, opacity: 0.5 }}>
+          Deal {used} damage
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// "What just happened" bar with Undo, shown after casting, fetching, attaching, sending to the graveyard or dealing damage
+function UndoToast({ toast, onUndo, onClose }) {
+  return (
+    <div className="fixed inset-x-0 z-[60] px-3 pointer-events-none" style={{ bottom: "calc(76px + env(safe-area-inset-bottom, 0px))" }}>
+      <div key={toast.key} role="status" className="max-w-lg mx-auto rounded-xl px-3 py-2.5 flex items-start gap-2 pointer-events-auto toast-in"
+        style={{ background: "#232838", border: "1px solid rgba(255,255,255,0.18)", boxShadow: "0 8px 24px rgba(0,0,0,0.5)" }}>
+        <Check size={16} className="flex-shrink-0 mt-0.5" style={{ color: "#8fd39a" }} />
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-semibold leading-snug" style={{ color: "#f0ead9" }}>{toast.msg}</div>
+          {toast.detail && <div className="text-[11.5px] leading-snug mt-0.5" style={{ color: "#a8a293" }}>{toast.detail}</div>}
+        </div>
+        {toast.snap && (
+          <button onClick={onUndo} className="text-[12px] font-bold rounded-lg px-2.5 py-1.5 inline-flex items-center gap-1 flex-shrink-0" style={BTN_GOLD}><Undo2 size={13} /> Undo</button>
+        )}
+        <button onClick={onClose} aria-label="Dismiss" className="p-1 flex-shrink-0"><X size={14} style={{ color: "#8b8778" }} /></button>
+      </div>
     </div>
   );
 }
 
 /* ====================== TAB 2 · CAST (play from hand) ====================== */
 function PlayTab(p) {
-  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard } = p;
+  const { white, setWhite, other, setOther, baseP, setBaseP, baseT, setBaseT, counters, curPower, curTough, projDmg, curDS, ctx, best, deckAuras, handAuras, hand, auraInfo, castFromHand, castMany, addToHand, removeFromHand, clearHand, equipped, graveSet, byName, openInfo, weights, setWeights, castLoop, startCastLoop, castLoopPick, exitCastLoop, resetTurn, equippedIds, costRed, setCostRed, affinity, setAffinity, costReduction, handSupport, supportPool, castSupport, onBoard } = p;
   const [q, setQ] = useState("");
   const [browse, setBrowse] = useState(false);
   const searchRef = useRef(null);
@@ -1178,7 +1625,7 @@ function PlayTab(p) {
   useOutsideClose(boxRef, listOpen, () => { setBrowse(false); setQ(""); if (searchRef.current) searchRef.current.blur(); });
 
   const addable = deckAuras
-    .filter((a) => !hand.has(a.id) && !equipped.has(a.id) && auraMatchesText(a, q))
+    .filter((a) => !hand.has(a.id) && !equipped.has(a.id) && !graveSet.has(a.id) && auraMatchesText(a, q))
     .sort((a, b) => a.cmc - b.cmc || a.name.localeCompare(b.name));
   const addableSupport = (supportPool || [])
     .filter((x) => !hand.has(x.id) && !onBoard.has(x.id) && (!q || norm(x.name).includes(norm(q)) || norm(x.typeLine || "").includes(norm(q))))
@@ -1188,10 +1635,10 @@ function PlayTab(p) {
     <div className="px-3 pt-4">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <div className="text-[10px] tracking-[0.3em] uppercase" style={{ color: "#c79a3e" }}>Cast · from hand</div>
+          <div className="text-[10px] tracking-[0.3em] uppercase" style={{ color: HDR }}>Cast · from hand</div>
           <p className="text-xs mb-2" style={{ color: "#8b8778" }}>Add the auras you're actually holding, then get the best play for your mana. Casting one triggers Light-Paws — grab the free aura on the Fetch tab.</p>
         </div>
-        <button onClick={resetTurn} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>
+        <button onClick={resetTurn} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg flex-shrink-0" style={BTN_2}>
           <RotateCcw size={13} /> Reset
         </button>
       </div>
@@ -1223,12 +1670,13 @@ function PlayTab(p) {
           <span className="text-[11px] uppercase" style={{ color: "#8b8778" }}>now</span>
           <span className="text-xl font-bold" style={{ color: "#f0ead9" }}>{curPower}/{curTough}</span>
         </div>
+        {counters > 0 && <div className="text-[10.5px] mt-1" style={{ color: "#8b8778" }}>Includes {counters} +1/+1 counter{counters === 1 ? "" : "s"} (change them on the Active tab).</div>}
       </Card>
 
       {/* your hand */}
       <div className="flex items-center justify-between mb-2 mt-1">
-        <span className="text-xs font-bold uppercase tracking-wide" style={{ color: "#c79a3e" }}>Your hand ({hand.size})</span>
-        {hand.size > 0 && <button onClick={clearHand} className="text-[11px] px-2 py-1 rounded" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>Clear hand</button>}
+        <span className="text-xs font-bold uppercase tracking-wide" style={{ color: HDR }}>Your hand ({hand.size})</span>
+        {hand.size > 0 && <button onClick={clearHand} className="text-[11px] px-2 py-1 rounded" style={BTN_2}>Clear hand</button>}
       </div>
 
       {/* PROMINENT add-to-hand search — always visible */}
@@ -1300,10 +1748,10 @@ function PlayTab(p) {
               </div>
             </div>
           ) : (
-          <div className="rounded-xl p-3 mb-3" style={{ background: "linear-gradient(160deg, rgba(232,184,75,0.14), rgba(232,184,75,0.05))", border: "1.5px solid #e8b84b" }}>
+          <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.14)" }}>
             <div className="flex items-center gap-1.5 mb-1.5">
               <Star size={15} style={{ color: "#e8b84b" }} fill="#e8b84b" />
-              <span className="text-sm font-bold uppercase tracking-wide" style={{ color: "#e8b84b" }}>{best.noMana ? "Best aura to play" : `Best play for ${total} mana`}</span>
+              <span className="text-sm font-bold uppercase tracking-wide" style={{ color: "#f0ead9" }}>{best.noMana ? "Best aura to play" : `Best play for ${total} mana`}</span>
             </div>
             {best.ids.length === 0 ? (
               <p className="text-sm" style={{ color: "#b7b1a2" }}>{best.noMana ? "No aura in hand adds new value to your board right now." : <>No aura in hand adds new value at this mana.{best.single && <> Cheapest useful cast: <b>{byName(best.single.id)}</b>.</>}</>}</p>
@@ -1311,8 +1759,8 @@ function PlayTab(p) {
               <>
                 <div className="flex flex-wrap gap-1.5 mb-2">
                   {best.ids.map((id) => (
-                    <span key={id} className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-sm font-semibold" style={{ background: "#f0ead9", color: "#221a09" }}>
-                      {byName(id)} <ManaCost aura={handAuras.find((a) => a.id === id) || deckAuras.find((a) => a.id === id) || byId[id]} dark />
+                    <span key={id} className="inline-flex items-center gap-1 text-[15px] font-bold mr-2" style={{ color: "#f0ead9" }}>
+                      {byName(id)} <ManaCost aura={handAuras.find((a) => a.id === id) || deckAuras.find((a) => a.id === id) || byId[id]} />
                     </span>
                   ))}
                 </div>
@@ -1337,7 +1785,7 @@ function PlayTab(p) {
           </div>
           )}
 
-          {handAuras.length > 0 && <div className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: "#c79a3e" }}>Auras</div>}
+          {handAuras.length > 0 && <div className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: HDR }}>Auras</div>}
           <div className="grid gap-1.5 mb-3">
             {handAuras.map((a) => (
               <HandRow key={a.id} aura={a} info={auraInfo[a.id]} ctx={ctx} rec={best.ids.includes(a.id)} manaSet={total > 0}
@@ -1348,7 +1796,7 @@ function PlayTab(p) {
 
           {handSupport.length > 0 && (
             <>
-              <div className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: "#c79a3e" }}>Other permanents</div>
+              <div className="text-[11px] font-bold uppercase tracking-wide mb-1" style={{ color: HDR }}>Other permanents</div>
               <p className="text-[10px] mb-1.5" style={{ color: "#6f6a5d" }}>Not scored — casting one puts it on your Board (no Light-Paws trigger).</p>
               <div className="grid gap-1.5 mb-3">
                 {handSupport.map((x) => (
@@ -1397,7 +1845,7 @@ function WeightRow({ label, wkey, weights, setWeights, step, min, max }) {
 
 function WeightsEditor({ weights, setWeights }) {
   const kwRows = [["flying", "Flying"], ["firstStrike", "First strike"], ["doubleStrike", "Double strike (× power)"], ["vigilance", "Vigilance"], ["lifelink", "Lifelink"], ["ward", "Ward"], ["totemArmor", "Totem armor"], ["hexproof", "Hexproof"], ["indestructible", "Indestructible"], ["protection", "Protection"]];
-  const Hd = ({ children }) => <div className="text-[11px] font-bold uppercase tracking-wide mt-3 mb-0.5" style={{ color: "#c79a3e" }}>{children}</div>;
+  const Hd = ({ children }) => <div className="text-[11px] font-bold uppercase tracking-wide mt-3 mb-0.5" style={{ color: HDR }}>{children}</div>;
   const kw = (k, l) => <WeightRow key={k} label={l} wkey={k} weights={weights} setWeights={setWeights} step={1} min={0} max={12} />;
   return (
     <div>
@@ -1429,12 +1877,13 @@ function HandRow({ aura, info, ctx, rec, manaSet, onCast, onRemove, onInfo }) {
   const short = manaSet && affordable === false; // only "unaffordable" when mana is actually tracked
   return (
     <div {...h} className="rounded-lg px-3 py-2 transition"
-      style={{ background: rec ? "linear-gradient(160deg, rgba(232,184,75,0.18), rgba(232,184,75,0.05))" : "rgba(255,255,255,0.04)", border: rec ? "1.5px solid #e8b84b" : "1px solid rgba(255,255,255,0.08)", opacity: short ? 0.6 : 1, cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
+      style={{ background: "rgba(255,255,255,0.04)", border: rec ? "1px solid rgba(255,255,255,0.28)" : "1px solid rgba(255,255,255,0.08)", opacity: short ? 0.6 : 1, touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="font-bold text-[15px] flex items-center gap-1.5" style={{ color: "#f0ead9" }}>
             {rec && <Star size={12} style={{ color: "#e8b84b" }} fill="#e8b84b" />}
             {aura.name} <ManaCost aura={aura} />
+            {rec && <span className="text-[10px] font-bold uppercase tracking-wide" style={{ color: "#a8a293" }}>best</span>}
           </div>
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[11px]">
             {statLabel(aura, ctx) && <span className="font-bold" style={{ color: "#cfc9ba" }}>{statLabel(aura, ctx)}</span>}
@@ -1526,7 +1975,7 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
 
   return (
     <div className="px-3 pt-4">
-      <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Deck · your saved decks</div>
+      <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: HDR }}>Deck · your saved decks</div>
       <p className="text-xs mb-3" style={{ color: "#8b8778" }}>Import a Light-Paws decklist, then pick which deck you're playing. Everything saves on this device only.</p>
 
       {/* import */}
@@ -1556,6 +2005,8 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
         {report && (
           <div className="text-[11px] mt-2 leading-snug" style={{ color: "#b7b1a2" }}>
             <span style={{ color: "#8fd39a" }}>Saved {report.total} cards{report.unique !== report.total ? ` (${report.unique} unique)` : ""}{report.site ? ` from ${report.site}` : ""}</span> — {report.auras} auras playable, {report.support} other permanents for the Board tab.
+            {report.prints > 0 && <span> Kept your printings for {report.prints} card{report.prints === 1 ? "" : "s"}.</span>}
+            {report.total > 100 && <span style={{ color: "#e8b84b" }}> That's over 100: open View list → Edit to mark sideboard cards.</span>}
             {report.rejected.length > 0 && <span> Couldn't read {report.rejected.length}: {report.rejected.slice(0, 4).join(", ")}{report.rejected.length > 4 ? "…" : ""}.</span>}
           </div>
         )}
@@ -1564,7 +2015,7 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
       {synced && <div className="text-[11px] mb-3" style={{ color: "#8fd39a" }}>✓ Card data synced from Scryfall</div>}
 
       {/* saved decks */}
-      <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: "#c79a3e" }}>Your decks ({decks.length})</div>
+      <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: HDR }}>Your decks ({decks.length})</div>
       {decks.length === 0 ? (
         <div className="rounded-xl p-4 text-center text-sm mb-4" style={{ background: "rgba(255,255,255,0.03)", border: "1px dashed rgba(255,255,255,0.15)", color: "#8b8778" }}>
           No decks yet — paste your Light-Paws deck link or decklist above to get started.
@@ -1573,43 +2024,52 @@ function DeckTab({ decks, activeId, onImport, importing, selectDeck, deleteDeck,
         <div className="grid gap-1.5 mb-4">
           {decks.map((d) => {
             const on = d.id === activeId;
+            const inDeck = inDeckCount(d), side = deckCount(d) - inDeck;
             return (
               <div key={d.id} className="rounded-lg px-3 py-2.5" style={{ background: on ? "rgba(232,184,75,0.14)" : "rgba(255,255,255,0.04)", border: on ? "1.5px solid #e8b84b" : "1px solid rgba(255,255,255,0.08)" }}>
                 <div className="flex items-center justify-between gap-2">
-                  <button onClick={() => selectDeck(d.id)} className="text-left min-w-0 flex-1">
+                  <button onClick={() => { if (!on) selectDeck(d.id); }} className="text-left min-w-0 flex-1">
                     <div className="font-bold text-[15px] flex items-center gap-1.5" style={{ color: "#f0ead9" }}>
                       {on && <Check size={14} style={{ color: "#e8b84b" }} />}{d.name}
+                      {d.sample && <span className="text-[9px] font-bold uppercase tracking-wide rounded px-1.5 py-0.5" style={{ color: "#a8a293", border: "1px solid rgba(255,255,255,0.15)" }}>sample</span>}
                     </div>
                     <div className="text-[11px]" style={{ color: "#8b8778" }}>
-                      {deckCount(d)} cards{deckCount(d) !== (d.all || []).length ? ` · ${(d.all || []).length} unique` : ""} · {(d.auras || []).length} auras · {(d.support || []).length} other permanents
-                      {on && <span style={{ color: "#e8b84b" }}> · playing now</span>}
+                      {inDeck} cards{side > 0 ? ` + ${side} sideboard` : ""} · {(d.auras || []).length} auras · {(d.support || []).length} other permanents
+                      {on && <span style={{ color: "#ece7db" }}> · playing now</span>}
                     </div>
+                    {inDeck > 100 && <div className="text-[11px] font-semibold mt-0.5" style={{ color: "#e6939a" }}>{inDeck - 100} over 100: tap Edit and mark sideboard cards</div>}
                   </button>
                 </div>
                 <div className="flex items-center gap-1.5 mt-2">
                   <button onClick={() => onViewList(d.id)}
-                    className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 py-1.5 rounded-md" style={{ background: "rgba(232,184,75,0.16)", color: "#e8b84b" }}>
+                    className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 py-1.5 rounded-md" style={{ background: "rgba(232,184,75,0.16)", color: "#e8b84b", border: "1px solid rgba(232,184,75,0.45)" }}>
                     <Layers size={13} /> View list
                   </button>
+                  <button onClick={() => onViewList(d.id, true)}
+                    className="inline-flex items-center gap-1 text-[12px] font-bold px-2.5 py-1.5 rounded-md" style={BTN_2}>
+                    <Pencil size={12} /> Edit
+                  </button>
                   <div className="flex-1" />
-                  <button onClick={() => { const n = prompt("Rename deck", d.name); if (n && n.trim()) renameDeck(d.id, n.trim()); }}
-                    className="text-[11px] px-2 py-1.5 rounded-md" style={{ background: "rgba(255,255,255,0.08)", color: "#cfc9ba" }}>Rename</button>
-                  <button onClick={() => { if (confirm(`Delete "${d.name}"?`)) deleteDeck(d.id); }} aria-label={`Delete ${d.name}`}
-                    className="rounded-md px-1.5 py-1.5" style={{ background: "rgba(255,255,255,0.08)" }}><X size={14} style={{ color: "#c98a8a" }} /></button>
+                  {!d.sample && <button onClick={() => { const n = prompt("Rename deck", d.name); if (n && n.trim()) renameDeck(d.id, n.trim()); }}
+                    className="text-[11px] px-2 py-1.5 rounded-md" style={BTN_2}>Rename</button>}
+                  {!d.sample && <button onClick={() => { if (confirm(`Delete "${d.name}"?`)) deleteDeck(d.id); }} aria-label={`Delete ${d.name}`}
+                    className="rounded-md px-1.5 py-1.5" style={BTN_2}><X size={14} style={{ color: "#c98a8a" }} /></button>}
                 </div>
               </div>
             );
           })}
         </div>
       )}
-      <p className="text-[11px] mb-6" style={{ color: "#6f6a5d" }}>Tap a deck's name to play it. View list shows every card without switching decks. Tap a card there and swipe to pick the printing you own.</p>
+      <p className="text-[11px] mb-6" style={{ color: "#6f6a5d" }}>Tap a deck's name to play it. View list shows every card without switching decks; tap a card there and swipe to pick the printing you own. Edit adds or removes cards and marks sideboard cards, even mid-game. The sample deck is always here; editing it saves your own copy.</p>
     </div>
   );
 }
 
 // Full-screen list of one deck's cards. Viewing never switches decks (switching clears the game state).
-function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, openInfoCard }) {
+// Edit mode adds/removes cards and marks sideboard cards; it never resets the game in progress.
+function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, openInfoCard, startEdit, setCardQty, toggleOut, addCardByName, onCopy }) {
   const [q, setQ] = useState("");
+  const [editing, setEditing] = useState(!!startEdit);
   useEffect(() => {
     const onKey = (e) => { if (e.key === "Escape") onClose(); };
     document.addEventListener("keydown", onKey);
@@ -1617,9 +2077,13 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
     return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
   }, []);
   const cards = deck.all || [];
+  const out = new Set(deck.out || []);
+  const isOut = (c) => out.has(norm(c.name));
+  const inDeck = inDeckCount(deck), side = deckCount(deck) - inDeck;
   const shown = cards.filter((c) => !q || norm(c.name).includes(norm(q)) || norm(c.typeLine || "").includes(norm(q)))
     .slice().sort((a, b) => a.name.localeCompare(b.name));
   const group = (c) => {
+    if (isOut(c)) return "Sideboard";
     const t = (c.typeLine || "").toLowerCase();
     if (/aura/.test(t)) return "Auras";
     if (/land/.test(t)) return "Lands";
@@ -1628,12 +2092,16 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
     if (/artifact/.test(t)) return "Artifacts";
     return "Other";
   };
-  const order = ["Auras", "Creatures", "Enchantments", "Artifacts", "Lands", "Other"];
+  const order = ["Auras", "Creatures", "Enchantments", "Artifacts", "Lands", "Other", "Sideboard"];
   const grouped = order.map((g) => [g, shown.filter((c) => group(c) === g)]).filter(([, list]) => list.length);
   const [basics, setBasics] = useState(false);
   const have = new Set(cards.map((c) => norm(c.name)));
   const upgrades = LIBRARY.filter((a) => a.buff && !have.has(norm(a.name)));
-  const deckBuy = cards.length ? tcgLink(tcgMassEntryUrl(cards, basics), "deck-buy") : null;
+  const playable = cards.filter((c) => !isOut(c));
+  const deckBuy = playable.length ? tcgLink(tcgMassEntryUrl(playable, basics), "deck-buy") : null;
+  const locked = editing && deck.sample;          // the sample itself can't be edited — make a copy first
+  const canEdit = editing && !deck.sample;
+  const addUpgrade = async (name) => { try { await addCardByName(deck.id, name); } catch (e) { alert(e.message); } };
 
   return (
     <div className="fixed inset-0 z-40 flex flex-col" role="dialog" aria-modal="true" aria-label={`${deck.name} card list`}
@@ -1644,13 +2112,22 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
             <div className="min-w-0">
               <div className="font-bold text-lg leading-tight truncate" style={{ color: "#f0ead9" }}>{deck.name}</div>
               <div className="text-[11px]" style={{ color: "#8b8778" }}>
-                {q ? `${shown.length} of ${cards.length} unique` : `${deckCount(deck)} cards · ${cards.length} unique`}
-                {playing && <span style={{ color: "#e8b84b" }}> · playing now</span>}
+                {q ? `${shown.length} of ${cards.length} unique` : `${inDeck} cards${side ? ` + ${side} sideboard` : ""} · ${cards.length} unique`}
+                {playing && <span style={{ color: "#ece7db" }}> · playing now</span>}
               </div>
             </div>
-            <button onClick={onClose} aria-label="Close list" className="p-1.5 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}><X size={18} style={{ color: "#cfc9ba" }} /></button>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <button onClick={() => setEditing((v) => !v)} className="inline-flex items-center gap-1 text-[12px] font-bold rounded-lg px-2.5 py-1.5"
+                style={editing ? BTN_GOLD : BTN_2}>{editing ? <><Check size={13} /> Done</> : <><Pencil size={12} /> Edit</>}</button>
+              <button onClick={onClose} aria-label="Close list" className="p-1.5 rounded-lg" style={BTN_2}><X size={18} /></button>
+            </div>
           </div>
-          <div className="flex items-center gap-2 rounded-xl px-3 py-2 mt-2.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
+          {inDeck > 100 && (
+            <div className="text-[11.5px] mt-2 rounded-lg px-2.5 py-1.5" style={{ background: "rgba(230,147,154,0.12)", color: "#e6939a", border: "1px solid rgba(230,147,154,0.35)" }}>
+              {inDeck - 100} over 100. {editing ? "Tap Sideboard on the cards you aren't playing." : "Tap Edit, then Sideboard on the cards you aren't playing."}
+            </div>
+          )}
+          <div className="flex items-center gap-2 rounded-xl px-3 py-2 mt-2.5" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.14)" }}>
             <Search size={16} style={{ color: "#8b8778" }} />
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter this deck…" className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
             {q && <button onClick={() => setQ("")} aria-label="Clear filter"><X size={15} style={{ color: "#8b8778" }} /></button>}
@@ -1660,14 +2137,24 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
 
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-lg mx-auto px-3 pt-3 pb-8">
-          <p className="text-[11px] mb-3" style={{ color: "#8b8778" }}>Tap a card to see it full size, then swipe left or right through its printings to pick the one you own.</p>
+          {locked && (
+            <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)" }}>
+              <p className="text-[12px] mb-2" style={{ color: "#cfc9ba" }}>The sample deck always stays as shipped. Make your own copy to add, remove or sideboard cards. Your current game carries over.</p>
+              <button onClick={() => { onCopy(); }} className="w-full text-sm font-bold rounded-lg py-2" style={BTN_GOLD}>Make my own copy to edit</button>
+            </div>
+          )}
+          {canEdit && <AddCardBox onAdd={(name) => addCardByName(deck.id, name)} />}
+          {!editing && <p className="text-[11px] mb-3" style={{ color: "#8b8778" }}>Tap a card to see it full size, then swipe left or right through its printings to pick the one you own.</p>}
           {grouped.map(([g, list]) => (
             <div key={g} className="mb-3">
-              <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: "#c79a3e" }}>{g} ({list.length})</div>
+              <div className="text-xs font-bold uppercase tracking-wide mb-1.5" style={{ color: HDR }}>{g} ({list.reduce((n, c) => n + (c.qty || 1), 0)})</div>
+              {g === "Sideboard" && <p className="text-[10.5px] mb-1.5" style={{ color: "#6f6a5d" }}>Not counted in the deck and not offered on Cast, Fetch or Board.</p>}
               <div className="grid gap-1.5">
-                {list.map((c) => (
-                  <DeckCardRow key={c.name} card={c} chosen={chosenPrints[c.name]} onOpen={() => onPick({ name: c.name })} />
-                ))}
+                {list.map((c) => canEdit
+                  ? <DeckEditRow key={c.name} card={c} out={isOut(c)}
+                      onQty={(n) => { if (n <= 0 && !confirm(`Remove ${c.name} from this deck?`)) return; setCardQty(deck.id, c.name, n); }}
+                      onToggleOut={() => toggleOut(deck.id, c.name)} />
+                  : <DeckCardRow key={c.name} card={c} out={isOut(c)} chosen={chosenPrints[c.name]} onOpen={() => onPick({ name: c.name })} />)}
               </div>
             </div>
           ))}
@@ -1675,8 +2162,8 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
 
           {!q && upgrades.length > 0 && (
             <div className="mt-5">
-              <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: "#c79a3e" }}>Upgrade ideas ({upgrades.length})</div>
-              <p className="text-[11px] mb-2" style={{ color: "#8b8778" }}>Light-Paws Auras this deck doesn't run yet. Tap one to see it.</p>
+              <div className="text-xs font-bold uppercase tracking-wide mb-1" style={{ color: HDR }}>Upgrade ideas ({upgrades.length})</div>
+              <p className="text-[11px] mb-2" style={{ color: "#8b8778" }}>Light-Paws Auras this deck doesn't run yet. Tap one to see it{canEdit ? ", or Add to put it in the deck" : ""}.</p>
               <div className="grid gap-1.5">
                 {upgrades.map((a) => (
                   <div key={a.id} className="rounded-lg px-3 py-2 flex items-center gap-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px dashed rgba(255,255,255,0.14)" }}>
@@ -1684,6 +2171,7 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
                       <div className="flex items-center gap-2"><span className="font-semibold text-[14px]" style={{ color: "#f0ead9" }}>{a.name}</span><ManaCost aura={a} /></div>
                       {a.note && <div className="text-[10.5px] mt-0.5" style={{ color: "#8b8778" }}>{a.note}</div>}
                     </button>
+                    {canEdit && <button onClick={() => addUpgrade(a.name)} className="text-[11px] font-bold rounded-lg px-2.5 py-1.5 inline-flex items-center gap-1 flex-shrink-0" style={BTN_GOLD}><Plus size={12} /> Add</button>}
                     {AFFILIATE_TCGPLAYER && <div className="flex-shrink-0"><BuyLink compact href={tcgLink(tcgCardUrl(a.name), "upgrade")} label="Buy" sub="upgrade" /></div>}
                   </div>
                 ))}
@@ -1704,16 +2192,16 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
                   style={{ background: "rgba(147,199,230,0.14)", color: "#93c7e6", border: "1px solid rgba(147,199,230,0.35)" }}>
                   <ShoppingCart size={15} /> Buy this deck on TCGplayer <ExternalLink size={12} />
                 </a>
-                <label className="flex items-center gap-1.5 text-[11px] px-2 rounded-lg cursor-pointer" style={{ color: "#b7b1a2", background: "rgba(255,255,255,0.05)" }}>
+                <label className="flex items-center gap-1.5 text-[11px] px-2 rounded-lg cursor-pointer" style={{ color: "#b7b1a2", background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.14)" }}>
                   <input type="checkbox" checked={basics} onChange={(e) => setBasics(e.target.checked)} /> Basics
                 </label>
               </div>
-              <div className="text-[10.5px] text-center mt-1" style={{ color: "#8b8778" }}>Affiliate link: opens your whole list in TCGplayer's cart. Supports the app at no extra cost.</div>
+              <div className="text-[10.5px] text-center mt-1" style={{ color: "#8b8778" }}>Affiliate link: opens your list (without sideboard) in TCGplayer's cart. Supports the app at no extra cost.</div>
             </div>
           )}
           {!playing && (
             <button onClick={() => { if (confirm(`Play "${deck.name}"? This clears your current hand, attached auras and board.`)) onPlay(); }}
-              className="w-full text-sm font-bold rounded-lg py-2.5" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
+              className="w-full text-sm font-bold rounded-lg py-2.5" style={BTN_GOLD}>
               Play this deck
             </button>
           )}
@@ -1723,19 +2211,92 @@ function DeckListSheet({ deck, playing, onPlay, onClose, onPick, chosenPrints, o
   );
 }
 
-function DeckCardRow({ card, chosen, onOpen }) {
+function DeckCardRow({ card, chosen, onOpen, out }) {
   return (
     <button onClick={onOpen} className="w-full text-left rounded-lg px-3 py-2"
-      style={{ background: "rgba(255,255,255,0.04)", border: chosen ? "1px solid rgba(232,184,75,0.6)" : "1px solid rgba(255,255,255,0.08)" }}>
+      style={{ background: "rgba(255,255,255,0.04)", border: chosen ? "1px solid rgba(232,184,75,0.6)" : "1px solid rgba(255,255,255,0.1)", opacity: out ? 0.6 : 1 }}>
       <div className="flex items-center justify-between gap-2">
-        <span className="font-semibold text-[14px]" style={{ color: "#f0ead9" }}>{card.qty > 1 && <span style={{ color: "#e8b84b" }}>{card.qty}× </span>}{card.name}</span>
+        <span className="font-semibold text-[14px]" style={{ color: "#f0ead9" }}>{card.qty > 1 && <span style={{ color: "#cfc9ba" }}>{card.qty}× </span>}{card.name}</span>
         <ScryCost cost={card.manaCost} />
       </div>
-      <div className="text-[10.5px] mt-0.5" style={{ color: "#8b8778" }}>{card.typeLine}</div>
-      <div className="text-[10px] mt-1 font-semibold" style={{ color: chosen ? "#e8b84b" : "#6f6a5d" }}>
+      <div className="text-[10.5px] mt-0.5" style={{ color: "#8b8778" }}>{card.typeLine || "Loading card type…"}</div>
+      <div className="text-[10px] mt-1 font-semibold" style={{ color: chosen ? "#e8b84b" : "#8b8778" }}>
         {chosen ? `✓ ${(chosen.setName || (chosen.set || "").toUpperCase())} #${chosen.collector}` : "Tap to choose your printing"}
       </div>
     </button>
+  );
+}
+
+function DeckEditRow({ card, out, onQty, onToggleOut }) {
+  const q = card.qty || 1;
+  return (
+    <div className="rounded-lg px-3 py-2" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.1)" }}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-semibold text-[14px] truncate" style={{ color: out ? "#8b8778" : "#f0ead9" }}>{card.name}</div>
+          <div className="text-[10.5px] truncate" style={{ color: "#8b8778" }}>{card.typeLine}</div>
+        </div>
+        <div className="flex items-center gap-1 flex-shrink-0">
+          <button onClick={onToggleOut} aria-pressed={out} className="text-[10.5px] font-bold rounded-full px-2 py-1"
+            style={out ? BTN_GOLD : BTN_2}>{out ? "Sideboard ✓" : "Sideboard"}</button>
+          <button onClick={() => onQty(q - 1)} aria-label={q > 1 ? `One fewer ${card.name}` : `Remove ${card.name}`} className="w-7 h-7 rounded flex items-center justify-center" style={BTN_2}>
+            {q > 1 ? <Minus size={13} /> : <Trash2 size={13} style={{ color: "#e6939a" }} />}
+          </button>
+          <span className="text-sm font-bold w-5 text-center" style={{ color: "#f0ead9" }}>{q}</span>
+          <button onClick={() => onQty(q + 1)} aria-label={`One more ${card.name}`} className="w-7 h-7 rounded flex items-center justify-center" style={BTN_2}><Plus size={13} /></button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Search Scryfall by name and add the card to the deck
+function AddCardBox({ onAdd }) {
+  const [q, setQ] = useState("");
+  const [sug, setSug] = useState([]);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState(null);
+  useEffect(() => {
+    const t0 = q.trim();
+    if (t0.length < 2) { setSug([]); return; }
+    let ok = true;
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch("https://api.scryfall.com/cards/autocomplete?q=" + encodeURIComponent(t0), { headers: { Accept: "application/json" } });
+        const d = await r.json();
+        if (ok) setSug((d.data || []).slice(0, 8));
+      } catch { if (ok) setSug([]); }
+    }, 250);
+    return () => { ok = false; clearTimeout(t); };
+  }, [q]);
+  const add = async (name) => {
+    if (busy) return;
+    setBusy(true); setMsg(null);
+    try { const n = await onAdd(name); setMsg({ ok: true, text: `Added ${n}.` }); setQ(""); setSug([]); }
+    catch (e) { setMsg({ ok: false, text: e.message || "Couldn't add that card." }); }
+    finally { setBusy(false); }
+  };
+  return (
+    <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.12)" }}>
+      <div className="text-[11px] font-bold uppercase tracking-wide mb-1.5" style={{ color: HDR }}>Add a card</div>
+      <div className="flex items-center gap-2 rounded-lg px-3 py-2" style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(255,255,255,0.16)" }}>
+        <Plus size={16} style={{ color: "#8b8778" }} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && sug[0]) add(sug[0]); }}
+          placeholder="Card name…" className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
+        {busy && <span className="text-[11px]" style={{ color: "#8b8778" }}>Adding…</span>}
+      </div>
+      {sug.length > 0 && (
+        <div className="grid gap-1 mt-1.5">
+          {sug.map((n) => (
+            <button key={n} onClick={() => add(n)} disabled={busy} className="flex items-center justify-between rounded-lg px-3 py-2 text-left" style={BTN_2}>
+              <span className="text-[13px] font-semibold" style={{ color: "#e6dfce" }}>{n}</span>
+              <span className="inline-flex items-center justify-center rounded-full" style={{ width: 24, height: 24, ...BTN_GOLD }}><Plus size={14} /></span>
+            </button>
+          ))}
+        </div>
+      )}
+      {msg && <div className="text-[11px] mt-1.5" style={{ color: msg.ok ? "#8fd39a" : "#e6939a" }}>{msg.text}</div>}
+    </div>
   );
 }
 
@@ -1761,7 +2322,7 @@ function BrowseToggle({ open, onToggle }) {
 }
 
 function Card({ children }) { return <div className="rounded-xl p-3 mb-3" style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.09)" }}>{children}</div>; }
-function Lbl({ children, inline }) { return <div className={"text-xs font-bold uppercase tracking-wide " + (inline ? "" : "mb-2")} style={{ color: "#c79a3e" }}>{children}</div>; }
+function Lbl({ children, inline }) { return <div className={"text-xs font-bold uppercase tracking-wide " + (inline ? "" : "mb-2")} style={{ color: HDR }}>{children}</div>; }
 
 function Step({ label, value, set, gold }) {
   return (
@@ -1936,62 +2497,43 @@ function EquipRow({ aura, ctx, onEquip, onInfo }) {
   );
 }
 
-function CardInfoModal({ aura, chosenPrint, onClose, onChangePrint }) {
-  const [data, setData] = useState(null);
-  const [state, setState] = useState("loading");
-  useEffect(() => {
-    let ok = true; setState("loading"); setData(null);
-    const url = chosenPrint && chosenPrint.set && chosenPrint.collector
-      ? `https://api.scryfall.com/cards/${chosenPrint.set}/${chosenPrint.collector}`
-      : "https://api.scryfall.com/cards/named?exact=" + encodeURIComponent(aura.name);
-    fetch(url, { headers: { Accept: "application/json" } })
-      .then((r) => (r.ok ? r.json() : Promise.reject()))
-      .then((d) => { if (ok) { setData(d); setState("ok"); } })
-      .catch(() => { if (ok) setState("err"); });
-    return () => { ok = false; };
-  }, [aura, chosenPrint]);
+function CardInfoModal({ aura, chosenPrint, onClose, onChoose }) {
+  const [cur, setCur] = useState(null);
   const fixedStat = aura.stat && (aura.stat.p || aura.stat.t) ? `+${aura.stat.p}/+${aura.stat.t}` : "";
-  const img = (data && getImg(data)) || (chosenPrint && chosenPrint.img) || null;
-  const flavor = data && (data.flavor_text || (data.card_faces && data.card_faces[0] && data.card_faces[0].flavor_text));
+  const face = cur && (cur.oracle_text != null ? cur : (cur.card_faces && cur.card_faces[0]) || cur);
+  const flavor = cur && (cur.flavor_text || (cur.card_faces && cur.card_faces[0] && cur.card_faces[0].flavor_text));
   return (
     <div onClick={onClose} className="fixed inset-0 z-50 flex items-end justify-center" style={{ background: "rgba(0,0,0,0.65)" }}>
-      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-t-2xl p-4" style={{ background: "#1a1e2b", border: "1px solid rgba(232,184,75,0.4)", maxHeight: "88vh", overflowY: "auto" }}>
-        <div className="flex items-start justify-between gap-2 mb-2">
+      <div onClick={(e) => e.stopPropagation()} className="w-full max-w-md rounded-t-2xl pt-4 pb-4" style={{ background: "#1a1e2b", border: "1px solid rgba(255,255,255,0.15)", maxHeight: "92vh", overflowY: "auto" }}>
+        <div className="flex items-start justify-between gap-2 mb-1 px-4">
           <div className="font-bold text-lg" style={{ color: "#f0ead9" }}>{aura.name}</div>
-          <button onClick={onClose} className="p-1 rounded flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}><X size={18} style={{ color: "#cfc9ba" }} /></button>
+          <button onClick={onClose} aria-label="Close" className="p-1 rounded flex-shrink-0" style={BTN_2}><X size={18} /></button>
         </div>
-        {img && <img src={img} alt={aura.name} draggable={false} className="w-full rounded-xl mb-3 card-img" />}
-        {onChangePrint && (
-          <button onClick={onChangePrint} className="w-full inline-flex items-center justify-center gap-1.5 text-[12px] font-bold rounded-lg py-2 mb-3"
-            style={{ background: "rgba(232,184,75,0.16)", color: "#e8b84b" }}>
-            <Layers size={13} /> Change printing
-          </button>
-        )}
-        <div className="mb-3"><BuyLink href={tcgLink(tcgCardUrl(aura.name, data), "card-popup")} label="Buy on TCGplayer" sub="card-popup" /></div>
-        <div className="flex items-center flex-wrap gap-2 mb-2">
-          <ManaCost aura={aura} />
-          {fixedStat && <span className="text-sm font-bold" style={{ color: "#cfc9ba" }}>{fixedStat}</span>}
-          {data && <span className="text-[11px]" style={{ color: "#8b8778" }}>{data.set_name} · #{data.collector_number}</span>}
+        <PrintCarousel name={aura.name} chosen={chosenPrint} onChoose={onChoose} onCurrent={setCur} maxW={250} />
+        <div className="px-4">
+          {cur && <BuyLink href={tcgLink(tcgCardUrl(cur.name, cur), "card-popup")} label="Buy on TCGplayer" sub="card-popup" />}
+          <div className="flex items-center flex-wrap gap-2 mt-3 mb-2">
+            {aura.cost && <ManaCost aura={aura} />}
+            {fixedStat && <span className="text-sm font-bold" style={{ color: "#cfc9ba" }}>{fixedStat}</span>}
+          </div>
+          {face ? (
+            <>
+              <div className="text-[12px] mb-1" style={{ color: "#8b8778" }}>{face.type_line}</div>
+              <div className="text-sm leading-snug whitespace-pre-line" style={{ color: "#d8d2c4" }}>{face.oracle_text}</div>
+              {flavor && <div className="text-[12.5px] italic leading-snug mt-2 pt-2" style={{ color: "#9a9484", borderTop: "1px solid rgba(255,255,255,0.08)" }}>{flavor}</div>}
+            </>
+          ) : (
+            <div className="text-sm" style={{ color: "#b7b1a2" }}>{aura.note || ""}</div>
+          )}
         </div>
-        {state === "ok" && data ? (
-          <>
-            <div className="text-[12px] mb-1" style={{ color: "#8b8778" }}>{data.type_line}</div>
-            <div className="text-sm leading-snug whitespace-pre-line" style={{ color: "#d8d2c4" }}>{data.oracle_text}</div>
-            {flavor && <div className="text-[12.5px] italic leading-snug mt-2 pt-2" style={{ color: "#9a9484", borderTop: "1px solid rgba(255,255,255,0.08)" }}>{flavor}</div>}
-            {data.artist && <div className="text-[10px] mt-2" style={{ color: "#6f6a5d" }}>Illus. {data.artist} · © Wizards of the Coast</div>}
-          </>
-        ) : state === "loading" ? (
-          <div className="text-sm" style={{ color: "#9a9484" }}>Loading card…</div>
-        ) : (
-          <div className="text-sm" style={{ color: "#b7b1a2" }}>{aura.note || "Full text unavailable offline."}</div>
-        )}
       </div>
     </div>
   );
 }
 
-// Full-screen card view: swipe left/right through every paper printing, tap "Use this printing" to keep it.
-function CardViewer({ card, chosen, onChoose, onClose }) {
+// Swipeable rail of every paper printing of a card, with "Use this printing".
+// Used by the card popup (Active / Cast / Fetch) and the full-screen viewer (Deck list).
+function PrintCarousel({ name, chosen, onChoose, onCurrent, maxW = 300 }) {
   const [prints, setPrints] = useState(null);
   const [state, setState] = useState("loading");
   const [idx, setIdx] = useState(0);
@@ -2001,8 +2543,8 @@ function CardViewer({ card, chosen, onChoose, onClose }) {
   const startIdx = useRef(0);
 
   useEffect(() => {
-    let ok = true; setState("loading");
-    const base = card.prints_search_uri || ("https://api.scryfall.com/cards/search?order=released&unique=prints&q=" + encodeURIComponent('!"' + card.name + '"'));
+    let ok = true; setState("loading"); setPrints(null);
+    const base = "https://api.scryfall.com/cards/search?order=released&unique=prints&q=" + encodeURIComponent('!"' + name + '"');
     (async () => {
       try {
         let u = base, all = [], pages = 0;
@@ -2020,7 +2562,7 @@ function CardViewer({ card, chosen, onChoose, onClose }) {
       } catch { if (ok) setState("err"); }
     })();
     return () => { ok = false; };
-  }, [card]);
+  }, [name]);
 
   // open on the printing you already chose
   useLayoutEffect(() => {
@@ -2031,16 +2573,8 @@ function CardViewer({ card, chosen, onChoose, onClose }) {
     setIdx(i); setLoaded(new Set([i - 1, i, i + 1, i + 2]));
   }, [prints]);
 
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key === "Escape") onClose();
-      else if (e.key === "ArrowRight") go(1);
-      else if (e.key === "ArrowLeft") go(-1);
-    };
-    document.addEventListener("keydown", onKey);
-    const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
-    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
-  });
+  const cur = prints && prints[idx];
+  useEffect(() => { onCurrent && onCurrent(cur || null); }, [cur]);
 
   const onScroll = () => {
     const el = railRef.current; if (!el || !el.clientWidth) return;
@@ -2055,90 +2589,99 @@ function CardViewer({ card, chosen, onChoose, onClose }) {
     const i = Math.min(prints.length - 1, Math.max(0, idx + d));
     el.scrollTo({ left: i * el.clientWidth, behavior: "smooth" });
   };
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "ArrowRight") go(1); else if (e.key === "ArrowLeft") go(-1); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
 
-  const cur = prints && prints[idx];
   const isChosen = !!(cur && chosen && chosen.set === cur.set && chosen.collector === cur.collector_number);
-  const face = cur && (cur.oracle_text != null ? cur : (cur.card_faces && cur.card_faces[0]) || cur);
   const many = prints && prints.length > 1;
+  if (state === "loading") return <div className="text-sm py-12 text-center" style={{ color: "#9a9484" }}>Loading printings…</div>;
+  if (state === "err") return <div className="text-sm px-4 py-10 text-center" style={{ color: "#e6939a" }}>Couldn't load printings from Scryfall. Check your connection and open the card again.</div>;
+  return (
+    <div>
+      <div className="relative">
+        <div ref={railRef} onScroll={onScroll} className="flex overflow-x-auto no-scrollbar"
+          style={{ scrollSnapType: "x mandatory", overscrollBehaviorX: "contain", WebkitOverflowScrolling: "touch" }}>
+          {prints.map((c, i) => {
+            const src = loaded.has(i) ? getImg(c) : null;
+            return (
+              <div key={c.id} className="flex-shrink-0 w-full flex justify-center px-10 pt-3" style={{ scrollSnapAlign: "center", scrollSnapStop: "always" }}>
+                <div className="w-full" style={{ maxWidth: maxW, aspectRatio: "488 / 680", borderRadius: "4.75% / 3.5%", overflow: "hidden", background: "rgba(255,255,255,0.05)" }}>
+                  {src && <img src={src} alt={`${c.name}, ${c.set_name}`} draggable={false} className="w-full h-full card-img" style={{ objectFit: "cover" }} />}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {many && idx > 0 && (
+          <button onClick={() => go(-1)} aria-label="Previous printing" className="absolute left-1 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center"
+            style={{ background: "rgba(18,21,31,0.8)", border: "1px solid rgba(255,255,255,0.25)" }}><ChevronLeft size={18} style={{ color: "#cfc9ba" }} /></button>
+        )}
+        {many && idx < prints.length - 1 && (
+          <button onClick={() => go(1)} aria-label="Next printing" className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center"
+            style={{ background: "rgba(18,21,31,0.8)", border: "1px solid rgba(255,255,255,0.25)" }}><ChevronRight size={18} style={{ color: "#cfc9ba" }} /></button>
+        )}
+      </div>
+      <div className="px-4 mt-2.5">
+        {many && (
+          <div className={"text-center text-[12px] mb-1.5 " + (hintSeen ? "" : "swipe-hint")} style={{ color: hintSeen ? "#6f6a5d" : "#93c7e6" }}>
+            {hintSeen ? `Printing ${idx + 1} of ${prints.length} · swipe for others` : "Swipe left or right to see every printing"}
+          </div>
+        )}
+        {cur && (
+          <div className="text-center mb-2.5">
+            <div className="text-sm font-bold" style={{ color: "#f0ead9" }}>{cur.set_name}</div>
+            <div className="text-[11px]" style={{ color: "#8b8778" }}>
+              {(cur.set || "").toUpperCase()} #{cur.collector_number}{cur.released_at ? `, ${cur.released_at.slice(0, 4)}` : ""}{cur.artist ? `. Illustrated by ${cur.artist}` : ""}
+            </div>
+          </div>
+        )}
+        {cur && onChoose && (
+          <button disabled={isChosen}
+            onClick={() => onChoose({ set: cur.set, collector: cur.collector_number, setName: cur.set_name, img: getImg(cur), artist: cur.artist, tcgplayer_id: cur.tcgplayer_id })}
+            className="w-full text-sm font-bold rounded-lg py-2.5 inline-flex items-center justify-center gap-1.5"
+            style={isChosen ? { background: "rgba(143,211,154,0.14)", color: "#8fd39a", border: "1px solid rgba(143,211,154,0.4)" } : BTN_GOLD}>
+            {isChosen ? <><Check size={15} /> Your printing</> : "Use this printing"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
 
+// Full-screen card view: swipe left/right through every paper printing, tap "Use this printing" to keep it.
+function CardViewer({ card, chosen, onChoose, onClose }) {
+  const [cur, setCur] = useState(null);
+  useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") onClose(); };
+    document.addEventListener("keydown", onKey);
+    const prev = document.body.style.overflow; document.body.style.overflow = "hidden";
+    return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
+  }, []);
+  const face = cur && (cur.oracle_text != null ? cur : (cur.card_faces && cur.card_faces[0]) || cur);
   return (
     <div className="fixed inset-0 z-50 flex flex-col" role="dialog" aria-modal="true" aria-label={`${card.name} printings`}
       style={{ ...SANS, background: "#12151f", color: "#ece7db" }}>
       <div className="safe-top" style={{ borderBottom: "1px solid rgba(232,184,75,0.25)", background: "#161a26" }}>
         <div className="max-w-lg mx-auto px-3 py-3 flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <div className="font-bold text-lg leading-tight truncate" style={{ color: "#f0ead9" }}>{card.name}</div>
-            <div className="text-[11px]" style={{ color: "#8b8778" }}>
-              {state === "ok" ? (many ? `Printing ${idx + 1} of ${prints.length}` : "Only one printing") : state === "loading" ? "Loading printings…" : ""}
-            </div>
-          </div>
-          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.08)" }}><X size={18} style={{ color: "#cfc9ba" }} /></button>
+          <div className="font-bold text-lg leading-tight truncate min-w-0" style={{ color: "#f0ead9" }}>{card.name}</div>
+          <button onClick={onClose} aria-label="Close" className="p-1.5 rounded-lg flex-shrink-0" style={BTN_2}><X size={18} /></button>
         </div>
       </div>
-
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-lg mx-auto pb-6">
-          {state === "loading" && <div className="text-sm py-16 text-center" style={{ color: "#9a9484" }}>Loading printings…</div>}
-          {state === "err" && <div className="text-sm px-4 py-16 text-center" style={{ color: "#e6939a" }}>Couldn't load printings from Scryfall. Check your connection and open the card again.</div>}
-
-          {state === "ok" && prints && (
-            <>
-              <div className="relative">
-                <div ref={railRef} onScroll={onScroll} className="flex overflow-x-auto no-scrollbar"
-                  style={{ scrollSnapType: "x mandatory", overscrollBehaviorX: "contain", WebkitOverflowScrolling: "touch" }}>
-                  {prints.map((c, i) => {
-                    const src = loaded.has(i) ? getImg(c) : null;
-                    return (
-                      <div key={c.id} className="flex-shrink-0 w-full flex justify-center px-10 pt-4" style={{ scrollSnapAlign: "center", scrollSnapStop: "always" }}>
-                        <div className="w-full" style={{ maxWidth: 300, aspectRatio: "488 / 680", borderRadius: "4.75% / 3.5%", overflow: "hidden", background: "rgba(255,255,255,0.05)" }}>
-                          {src && <img src={src} alt={`${c.name}, ${c.set_name}`} draggable={false} className="w-full h-full card-img" style={{ objectFit: "cover" }} />}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {many && idx > 0 && (
-                  <button onClick={() => go(-1)} aria-label="Previous printing" className="absolute left-1 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center"
-                    style={{ background: "rgba(18,21,31,0.75)", border: "1px solid rgba(255,255,255,0.12)" }}><ChevronLeft size={18} style={{ color: "#cfc9ba" }} /></button>
-                )}
-                {many && idx < prints.length - 1 && (
-                  <button onClick={() => go(1)} aria-label="Next printing" className="absolute right-1 top-1/2 -translate-y-1/2 w-8 h-8 rounded-full flex items-center justify-center"
-                    style={{ background: "rgba(18,21,31,0.75)", border: "1px solid rgba(255,255,255,0.12)" }}><ChevronRight size={18} style={{ color: "#cfc9ba" }} /></button>
-                )}
+          <PrintCarousel name={card.name} chosen={chosen} onChoose={onChoose} onCurrent={setCur} />
+          <div className="px-4">
+            {cur && <BuyLink href={tcgLink(tcgCardUrl(cur.name, cur), "card-viewer")} label="Buy this printing on TCGplayer" sub="card-viewer" />}
+            {face && (face.type_line || face.oracle_text) && (
+              <div className="mt-4 pt-3" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
+                <div className="text-[12px] mb-1" style={{ color: "#8b8778" }}>{face.type_line}</div>
+                <div className="text-sm leading-snug whitespace-pre-line" style={{ color: "#d8d2c4" }}>{face.oracle_text}</div>
               </div>
-
-              <div className="px-4 mt-3">
-                {many && (
-                  <div className={"text-center text-[12px] mb-2 " + (hintSeen ? "" : "swipe-hint")} style={{ color: hintSeen ? "#6f6a5d" : "#93c7e6" }}>
-                    {hintSeen ? "Swipe for other printings" : "Swipe left or right to see every printing"}
-                  </div>
-                )}
-                {cur && (
-                  <div className="text-center mb-3">
-                    <div className="text-sm font-bold" style={{ color: "#f0ead9" }}>{cur.set_name}</div>
-                    <div className="text-[11px]" style={{ color: "#8b8778" }}>
-                      {(cur.set || "").toUpperCase()} #{cur.collector_number}{cur.released_at ? `, ${cur.released_at.slice(0, 4)}` : ""}{cur.artist ? `. Illustrated by ${cur.artist}` : ""}
-                    </div>
-                  </div>
-                )}
-                {cur && (
-                  <button disabled={isChosen}
-                    onClick={() => onChoose({ set: cur.set, collector: cur.collector_number, setName: cur.set_name, img: getImg(cur), artist: cur.artist })}
-                    className="w-full text-sm font-bold rounded-lg py-2.5 inline-flex items-center justify-center gap-1.5"
-                    style={isChosen ? { background: "rgba(143,211,154,0.14)", color: "#8fd39a", border: "1px solid rgba(143,211,154,0.4)" } : { background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>
-                    {isChosen ? <><Check size={15} /> Your printing</> : "Use this printing"}
-                  </button>
-                )}
-                {cur && <BuyLink href={tcgLink(tcgCardUrl(cur.name, cur), "card-viewer")} label="Buy this printing on TCGplayer" sub="card-viewer" />}
-                {face && (face.type_line || face.oracle_text) && (
-                  <div className="mt-4 pt-3" style={{ borderTop: "1px solid rgba(255,255,255,0.08)" }}>
-                    <div className="text-[12px] mb-1" style={{ color: "#8b8778" }}>{face.type_line}</div>
-                    <div className="text-sm leading-snug whitespace-pre-line" style={{ color: "#d8d2c4" }}>{face.oracle_text}</div>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -2173,7 +2716,12 @@ function BoardPeek({ curPower, curTough, curDS, ctx, equippedIds, deckAuras, byN
             ))}
             {kws.length === 0 && <span className="text-[11px] italic" style={{ color: "#6f6a5d" }}>no keywords</span>}
             {extra > 0 && <span className="text-[10px]" style={{ color: "#8b8778" }}>+{extra} more</span>}
-            <span className="text-[11px] ml-1" style={{ color: "#c79a3e" }}>{equippedIds.length} ▾</span>
+            <span className="text-[11px] ml-1 inline-flex items-center gap-1" style={{ color: "#cfc9ba" }}>
+              {equippedIds.length}
+              <span className="inline-flex items-center justify-center rounded-full" style={{ width: 20, height: 20, border: "1.5px solid #e8b84b", color: "#e8b84b" }}>
+                <ChevronDown size={13} style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 150ms" }} />
+              </span>
+            </span>
           </span>
         </div>
       </button>
@@ -2199,7 +2747,7 @@ function FetchRow({ a, ev, first, onEquip, onInfo }) {
   const stop = (e) => e.stopPropagation();
   return (
     <div {...h} className="text-left rounded-lg px-3 py-2 transition"
-      style={{ background: first ? "linear-gradient(160deg, rgba(232,184,75,0.14), rgba(232,184,75,0.05))" : "rgba(255,255,255,0.04)", border: first ? "1.5px solid #e8b84b" : "1px solid rgba(255,255,255,0.08)", cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
+      style={{ background: "rgba(255,255,255,0.04)", border: first ? "1px solid rgba(255,255,255,0.28)" : "1px solid rgba(255,255,255,0.08)", cursor: "pointer", touchAction: "pan-y", userSelect: "none", WebkitUserSelect: "none" }}>
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
           <div className="font-bold text-[15px] flex items-center gap-1.5" style={{ color: "#f0ead9" }}>
@@ -2211,7 +2759,7 @@ function FetchRow({ a, ev, first, onEquip, onInfo }) {
         <div className="flex items-center gap-2 flex-shrink-0">
           <div className="text-right">
             <div className="text-[9px] uppercase" style={{ color: "#6f6a5d" }}>value</div>
-            <div className="text-base font-bold leading-none" style={{ color: "#e8b84b" }}>{ev.score.toFixed(1)}</div>
+            <div className="text-base font-bold leading-none" style={{ color: "#f0ead9" }}>{ev.score.toFixed(1)}</div>
           </div>
           <button onClick={(e) => { stop(e); onEquip(); }} onPointerDown={stop} onPointerUp={stop}
             className="text-xs font-bold rounded-lg px-3 py-2" style={{ background: "linear-gradient(160deg,#e8b84b,#c1902f)", color: "#221a09" }}>Add</button>
@@ -2240,7 +2788,7 @@ function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduc
     <div className="px-3 pt-4">
       <div className="flex items-start justify-between gap-2">
         <div>
-          <div className="text-[10px] tracking-[0.3em] uppercase" style={{ color: "#c79a3e" }}>Board · everything else you control</div>
+          <div className="text-[10px] tracking-[0.3em] uppercase" style={{ color: HDR }}>Board · everything else you control</div>
           <p className="text-xs mb-2" style={{ color: "#8b8778" }}>Your mana, other permanents, and the non-Aura cards in play that change how your Auras cast.</p>
         </div>
         <button onClick={resetTurn} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>
@@ -2287,7 +2835,7 @@ function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduc
       )}
 
       {/* in play */}
-      <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: "#c79a3e" }}>In play ({boardCards.length})</div>
+      <div className="text-xs font-bold uppercase tracking-wide mb-2" style={{ color: HDR }}>In play ({boardCards.length})</div>
       <div className="grid gap-1.5 mb-3">
         {boardCards.map((x) => (
           <div key={x.id} className="flex items-center justify-between rounded-lg px-3 py-2" style={{ background: "rgba(232,184,75,0.12)", border: "1px solid #e8b84b" }}>
@@ -2343,12 +2891,12 @@ function BoardStateTab({ supportPool, onBoard, setOnBoard, boardCards, costReduc
 }
 
 /* ====================== TAB · FETCH (Light-Paws trigger) ====================== */
-function FetchTab({ onOpenWeights, deckAuras, equipped, hand, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv, loopActive, onBackToCast, onAfterFetch, ctx, equippedIds, curDS, resetTurn }) {
+function FetchTab({ onOpenWeights, deckAuras, equipped, hand, graveSet, equip, valueOfAdding, curPower, curTough, openInfo, weights, setWeights, mv, setMv, loopActive, onBackToCast, onAfterFetch, ctx, equippedIds, curDS, resetTurn }) {
   const [q, setQ] = useState("");
   const [kwFilters, setKwFilters] = useState(() => new Set());
   const cap = mv >= 5 ? 99 : mv;
 
-  const inRange = deckAuras.filter((a) => !equipped.has(a.id) && !hand.has(a.id) && a.cmc <= cap);
+  const inRange = deckAuras.filter((a) => !equipped.has(a.id) && !hand.has(a.id) && !graveSet.has(a.id) && a.cmc <= cap);
   // only offer filters for keywords that actually exist among fetchable auras at this cost
   const availableKw = KW_ORDER.filter((k) => inRange.some((a) => a.buff && a.canRide && a.kw.includes(k)));
   const toggleKw = (k) => setKwFilters((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
@@ -2367,54 +2915,21 @@ function FetchTab({ onOpenWeights, deckAuras, equipped, hand, equip, valueOfAddi
         </button>
       )}
       <div className="flex items-start justify-between gap-2">
-        <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: "#c79a3e" }}>Fetch · trigger tutor</div>
-        <button onClick={resetTurn} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: "#cfc9ba" }}>
+        <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: HDR }}>Fetch · trigger tutor</div>
+        <button onClick={resetTurn} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-lg flex-shrink-0" style={BTN_2}>
           <RotateCcw size={13} /> Reset
         </button>
       </div>
       <BoardPeek {...{ curPower, curTough, curDS, ctx, equippedIds, deckAuras, byName }} />
-      <p className="text-xs mb-1" style={{ color: "#8b8778" }}>
+      <p className="text-xs mb-3" style={{ color: "#8b8778" }}>
         Cast an Aura, then tap its mana value. Light-Paws fetches any Aura of that value <b>or less</b> whose name you don't already control — ranked best-first for your board (Light-Paws is {curPower}/{curTough}).
       </p>
 
-      <div className="text-[11px] font-bold uppercase mb-1.5 mt-3" style={{ color: "#c79a3e" }}>Mana value of the Aura you cast</div>
-      <NoSwipe className="flex items-center gap-2 mb-3">
-        {[1, 2, 3, 4, 5].map((n) => {
-          const on = mv === n;
-          return (
-            <button key={n} onClick={() => setMv(n)} className="flex-1 rounded-lg font-bold text-lg py-2.5"
-              style={{ background: on ? "linear-gradient(160deg,#e8b84b,#c1902f)" : "rgba(255,255,255,0.05)", color: on ? "#221a09" : "#cfc9ba", border: on ? "none" : "1px solid rgba(255,255,255,0.1)" }}>
-              {n === 5 ? "5+" : n}
-            </button>
-          );
-        })}
-      </NoSwipe>
-
-      <div className="flex items-center gap-2 rounded-xl px-3 py-2 mb-3" style={{ background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.1)" }}>
-        <Search size={16} style={{ color: "#8b8778" }} />
-        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search: name, keyword, or mana value (vigilance, flying, 2…)"
-          className="bg-transparent outline-none text-sm w-full" style={{ color: "#ece7db" }} />
-        {q && <button onClick={() => setQ("")}><X size={15} style={{ color: "#8b8778" }} /></button>}
-      </div>
-
-      {availableKw.length > 0 && (
-        <NoSwipe className="flex items-center gap-1.5 overflow-x-auto pb-2 mb-1" style={{ WebkitOverflowScrolling: "touch" }}>
-          <Filter size={13} style={{ color: "#8b8778", flexShrink: 0 }} />
-          {availableKw.map((k) => {
-            const on = kwFilters.has(k);
-            return (
-              <button key={k} onClick={() => toggleKw(k)} className="text-[11px] font-semibold rounded-full px-2.5 py-1 whitespace-nowrap flex-shrink-0"
-                style={{ background: on ? "#e8b84b" : "rgba(255,255,255,0.06)", color: on ? "#221a09" : "#a8a293", border: on ? "none" : "1px solid rgba(255,255,255,0.1)" }}>
-                {KW[k].label}
-              </button>
-            );
-          })}
-          {kwFilters.size > 0 && <button onClick={() => setKwFilters(new Set())} className="text-[11px] px-2 py-1 rounded-full flex-shrink-0" style={{ background: "rgba(255,255,255,0.06)", color: "#8b8778" }}>clear</button>}
-        </NoSwipe>
-      )}
+      <AuraFilterBar mvLabel="Mana value of the Aura you cast (fetches that or less)" mvSelected={new Set([mv])} onMv={setMv} q={q} setQ={setQ}
+        kwAvail={availableKw} kwSel={kwFilters} toggleKw={toggleKw} onClear={() => { setKwFilters(new Set()); setQ(""); }} />
 
       <div className="text-xs mb-2" style={{ color: "#8b8778" }}>
-        {buffs.length} fetchable to equip · cost ≤ {mv >= 5 ? "any" : mv} · tap Add · hold for card
+        {buffs.length} fetchable · mana value ≤ {mv >= 5 ? "any" : mv} · tap Add · hold for the full card
       </div>
       <div className="grid gap-1.5 mb-4">
         {buffs.map(({ a, ev }, i) => (
@@ -2672,6 +3187,7 @@ function SettingsSheet({ initialSection, onClose, weights, setWeights, onTour })
           <SettingsSection title="Help & feedback" icon={HelpCircle} open={open.has("help")} onToggle={() => toggle("help")}>
             <div className="grid gap-1.5">
               <SettingRow icon={HelpCircle} label="How it works" sub="Replay the quick tour of each tab" onClick={onTour} />
+              <p className="text-[11px] leading-snug px-1 pt-1" style={{ color: "#8b8778" }}>Tip: gold-filled buttons and outlined chips are things you can tap. Plain text is just information.</p>
               {FEEDBACK_URL && <SettingRow icon={MessageSquare} label="Send feedback" sub="Report a bug or suggest a feature" href={FEEDBACK_URL} onClick={() => track("click/feedback")} />}
               {DONATE_URL && <SettingRow icon={Heart} label="Support this app" sub="It's free. Tips help cover the domain and hosting." href={DONATE_URL} onClick={() => track("click/support")} />}
             </div>
