@@ -28,7 +28,7 @@ const DONATE_URL = "https://buymeacoffee.com/jrkline1116";   // e.g. "https://ko
 const FEEDBACK_URL = "https://forms.gle/ESrGxf4UJ7nFg9Nm9";      // Google Form link — the Feedback button appears once this is set
 const GOATCOUNTER_CODE = "lightpaws";  // GoatCounter site code, e.g. "lightpaws" — analytics turn on once this is set
 const SITE_URL = "https://lightpaws.app/";
-const APP_VERSION = "2026.10.25";
+const APP_VERSION = "2026.10.26";
 // TCGplayer affiliate (Impact). Leave "" to hide every Buy button.
 const AFFILIATE_TCGPLAYER = "https://partner.tcgplayer.com/c/7855069/1780961/21018?partnerpropertyid=8916392";
 
@@ -1491,8 +1491,9 @@ function AuraFilterBar({ mvLabel, mvSelected, onMv, q, setQ, kwAvail, kwSel, tog
 function OpponentsPanel({ opps, setOpps, swing, applyDamage }) {
   const [split, setSplit] = useState(null);
   const upd = (id, f) => setOpps((os) => os.map((o) => (o.id === id ? f(o) : o)));
-  const add = () => setOpps((os) => (os.length >= 6 ? os : [...os, { id: "o" + Date.now(), name: "Opponent " + (os.length + 1), life: START_LIFE, cmd: 0 }]));
-  const remove = (id) => setOpps((os) => (os.length <= 1 ? os : os.filter((o) => o.id !== id)));
+  // pick how many opponents are at the table; existing names/life are kept, extras added at full life
+  const setCount = (n) => setOpps((os) => (n <= os.length ? os.slice(0, n)
+    : [...os, ...Array.from({ length: n - os.length }, (_, i) => ({ id: "o" + Date.now() + i, name: "Opponent " + (os.length + i + 1), life: START_LIFE, cmd: 0 }))]));
   const alive = opps.filter((o) => !oppOut(o));
   const openSplit = () => {
     const target = alive.slice().sort((a, b) => oppNeed(a) - oppNeed(b))[0];
@@ -1503,6 +1504,14 @@ function OpponentsPanel({ opps, setOpps, swing, applyDamage }) {
       <div className="flex items-center justify-between mb-2">
         <span className="text-xs font-bold uppercase tracking-wide flex items-center gap-1.5" style={{ color: HDR }}><Users size={13} /> Opponents</span>
         <span className="text-[11px]" style={{ color: "#8b8778" }}>Light-Paws swings for <b style={{ color: "#f0ead9" }}>{swing}</b></span>
+      </div>
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="text-[11px] mr-1" style={{ color: "#8b8778" }}>How many?</span>
+        {[1, 2, 3, 4, 5].map((n) => (
+          <button key={n} onClick={() => setCount(n)} aria-pressed={opps.length === n} aria-label={`${n} opponent${n === 1 ? "" : "s"}`}
+            className="flex-1 rounded-lg font-bold text-sm py-1.5"
+            style={opps.length === n ? { ...BTN_GOLD, border: "1px solid #e8b84b" } : { background: "rgba(255,255,255,0.05)", color: "#cfc9ba", border: "1px solid rgba(255,255,255,0.2)" }}>{n}</button>
+        ))}
       </div>
       <div className="grid gap-1.5">
         {opps.map((o) => {
@@ -1528,17 +1537,13 @@ function OpponentsPanel({ opps, setOpps, swing, applyDamage }) {
                   <MiniStep value={o.cmd} set={(f) => upd(o.id, (x) => ({ ...x, cmd: f(x.cmd) }))} />
                   <span className="text-[10px]" style={{ color: "#6f6a5d" }}>/21</span>
                 </span>
-                {opps.length > 1 && <button onClick={() => remove(o.id)} aria-label={`Remove ${o.name}`} className="rounded-md p-1" style={BTN_2}><X size={12} /></button>}
               </div>
             </div>
           );
         })}
       </div>
-      <div className="flex gap-2 mt-2">
-        <button onClick={openSplit} disabled={!swing || !alive.length} className="flex-1 text-sm font-bold rounded-lg py-2 inline-flex items-center justify-center gap-1.5"
-          style={!swing || !alive.length ? { ...BTN_2, opacity: 0.5 } : BTN_GOLD}><Target size={15} /> Deal damage</button>
-        {opps.length < 6 && <button onClick={add} className="text-xs font-bold rounded-lg px-3 inline-flex items-center gap-1" style={BTN_2}><Plus size={13} /> Opponent</button>}
-      </div>
+      <button onClick={openSplit} disabled={!swing || !alive.length} className="w-full mt-2 text-sm font-bold rounded-lg py-2 inline-flex items-center justify-center gap-1.5"
+        style={!swing || !alive.length ? { ...BTN_2, opacity: 0.5 } : BTN_GOLD}><Target size={15} /> Deal damage</button>
       {split && <DamageSplit opps={alive} swing={swing} init={split} onClose={() => setSplit(null)} onApply={(alloc, cmd) => { applyDamage(alloc, cmd); setSplit(null); }} />}
     </div>
   );
