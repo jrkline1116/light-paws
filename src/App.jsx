@@ -514,7 +514,7 @@ export default function LightPawsConsole() {
   const [activeId, setActiveId] = useState(() => { const id = LS.get("activeId", null); return id && LS.get("decks", []).some((d) => d.id === id) ? id : SAMPLE_ID; });
   const [equipped, setEquipped] = useState(() => new Set(LS.get("equipped", [])));
   const [manualKw, setManualKw] = useState(() => new Set(LS.get("manual", [])));
-  const [opps, setOpps] = useState(() => { const o = LS.get("opps", null); return Array.isArray(o) && o.length ? o : defaultOpps(3); });
+  const [opps, setOpps] = useState(() => { const o = LS.get("opps", null); return Array.isArray(o) && o.length ? o.slice(0, 3) : defaultOpps(3); });   // 1–3 opponents
   const [counters, setCounters] = useState(() => LS.get("counters", 0));     // +1/+1 counters on Light-Paws
   const [grave, setGrave] = useState(() => LS.get("grave", []));            // Aura ids in your graveyard, newest first
   const aliveOpps = opps.filter((o) => !oppOut(o));
@@ -1507,7 +1507,7 @@ function OpponentsPanel({ opps, setOpps, swing, applyDamage }) {
       </div>
       <div className="flex items-center gap-1.5 mb-2">
         <span className="text-[11px] mr-1" style={{ color: "#8b8778" }}>How many?</span>
-        {[1, 2, 3, 4, 5].map((n) => (
+        {[1, 2, 3].map((n) => (
           <button key={n} onClick={() => setCount(n)} aria-pressed={opps.length === n} aria-label={`${n} opponent${n === 1 ? "" : "s"}`}
             className="flex-1 rounded-lg font-bold text-sm py-1.5"
             style={opps.length === n ? { ...BTN_GOLD, border: "1px solid #e8b84b" } : { background: "rgba(255,255,255,0.05)", color: "#cfc9ba", border: "1px solid rgba(255,255,255,0.2)" }}>{n}</button>
